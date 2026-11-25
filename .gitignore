@@ -1,0 +1,19 @@
+# Rust / Cargo
+target/
+**/*.rs.bk
+
+# Node / Vite / Tauri frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# IDE & OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Runtime / Local test data
+.twilight-dev/
+*.log

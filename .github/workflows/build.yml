@@ -1,0 +1,152 @@
+name: Build & Release TwilightLauncher
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  test-core:
+    name: Verify Rust Core & Frontend
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Run twilight-core unit tests
+        run: cargo test -p twilight-core
+
+      - name: Install frontend dependencies & verify TypeScript build
+        run: |
+          npm install
+          npm run build
+
+  build-desktop:
+    name: Build (${{ matrix.label }})
+    needs: test-core
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows-latest
+            label: Windows (.exe / NSIS / .msi)
+            artifact_name: TwilightLauncher-Windows-x64
+            args: ""
+          - platform: ubuntu-22.04
+            label: Linux (.AppImage / .deb / .rpm)
+            artifact_name: TwilightLauncher-Linux-x86_64
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Install Linux system dependencies (WebKit2GTK 4.1, AppImage, DEB, RPM)
+        if: matrix.platform == 'ubuntu-22.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            build-essential \
+            curl \
+            wget \
+            file \
+            libxdo-dev \
+            libssl-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            rpm
+
+      - name: Install frontend dependencies
+        run: npm install
+
+      - name: Build Tauri bundles (CI push / PR / manual dispatch)
+        if: "!startsWith(github.ref, 'refs/tags/v')"
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NO_STRIP: true
+        with:
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: "[name]-[platform]-[arch]-[bundle]"
+
+      - name: Upload standalone Windows portable .exe artifact
+        if: "!startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'"
+        uses: actions/upload-artifact@v4
+        with:
+          name: TwilightLauncher-Windows-x64-portable-exe
+          path: target/release/twilight-launcher.exe
+          if-no-files-found: warn
+
+      - name: Build & Publish GitHub Release (on v* tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          NO_STRIP: true
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "TwilightLauncher ${{ github.ref_name }}"
+          releaseBody: |
+            ## TwilightLauncher ${{ github.ref_name }}
+
+            Ultra-lightweight monotone Minecraft: Java Edition launcher built with Rust + Tauri v2 + React.
+
+            ### Downloads
+            - **Windows (Installer):** `*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi` (MSI)
+            - **Windows (Portable):** `TwilightLauncher-portable-x64.exe`
+            - **Linux (Universal):** `*_amd64.AppImage`
+            - **Debian / Ubuntu / Mint / Pop!_OS:** `*_amd64.deb`
+            - **Fedora / RHEL / openSUSE:** `*.x86_64.rpm`
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}
+
+      - name: Attach standalone portable .exe to GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          if (Test-Path "target/release/twilight-launcher.exe") {
+            Copy-Item "target/release/twilight-launcher.exe" "TwilightLauncher-portable-x64.exe"
+            gh release upload "${{ github.ref_name }}" "TwilightLauncher-portable-x64.exe" --clobber
+          }
