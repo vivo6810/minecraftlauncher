@@ -237,24 +237,91 @@ async fn import_and_equip_wardrobe_png(
 }
 
 #[tauri::command]
-fn equip_existing_wardrobe_item(
+async fn equip_existing_wardrobe_item(
     ctx: State<'_, AppContext>,
     account_id: String,
     sha256: String,
     kind: WardrobeAssetKind,
     variant: SkinVariant,
 ) -> Result<LauncherStateSnapshot, String> {
-    let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
-    if let Some(acct) = guard.accounts.iter_mut().find(|a| a.id == account_id) {
-        match kind {
-            WardrobeAssetKind::Skin => {
-                acct.skin_sha256 = if sha256.is_empty() { None } else { Some(sha256) };
-                acct.skin_variant = variant;
-            }
-            WardrobeAssetKind::Cape => {
-                acct.custom_cape_sha256 = if sha256.is_empty() { None } else { Some(sha256) };
+    let premium_upload = {
+        let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
+        let mut pending_upload: Option<(String, std::path::PathBuf)> = None;
+        if let Some(acct) = guard.accounts.iter_mut().find(|a| a.id == account_id) {
+            match kind {
+                WardrobeAssetKind::Skin => {
+                    acct.skin_sha256 = if sha256.is_empty() {
+                        None
+                    } else {
+                        if acct.account_type == AccountType::Microsoft {
+                            if let Some(tok) = acct.access_token.clone() {
+                                let skin_path = ctx
+                                    .paths
+                                    .wardrobe_skins_dir()
+                                    .join(format!("{sha256}.png"));
+                                pending_upload = Some((tok, skin_path));
+                            }
+                        }
+                        Some(sha256)
+                    };
+                    acct.skin_variant = variant;
+                }
+                WardrobeAssetKind::Cape => {
+                    acct.custom_cape_sha256 = if sha256.is_empty() {
+                        None
+                    } else {
+                        Some(sha256)
+                    };
+                }
             }
         }
+        twilight_core::save_state(&ctx.paths, &guard).map_err(|e| e.to_string())?;
+        pending_upload
+    };
+
+    if let Some((tok, skin_path)) = premium_upload {
+        if let Ok(png_bytes) = std::fs::read(skin_path) {
+            let _ = twilight_core::auth::upload_skin_to_mojang_premium(
+                &ctx.http, &tok, png_bytes, variant,
+            )
+            .await;
+        }
+    }
+
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    Ok(guard.clone())
+}
+
+#[tauri::command]
+fn remove_wardrobe_item(
+    ctx: State<'_, AppContext>,
+    sha256: String,
+    kind: WardrobeAssetKind,
+) -> Result<LauncherStateSnapshot, String> {
+    let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    guard
+        .wardrobe
+        .retain(|w| !(w.sha256 == sha256 && w.kind == kind));
+    for acct in &mut guard.accounts {
+        match kind {
+            WardrobeAssetKind::Skin => {
+                if acct.skin_sha256.as_deref() == Some(sha256.as_str()) {
+                    acct.skin_sha256 = None;
+                }
+            }
+            WardrobeAssetKind::Cape => {
+                if acct.custom_cape_sha256.as_deref() == Some(sha256.as_str()) {
+                    acct.custom_cape_sha256 = None;
+                }
+            }
+        }
+    }
+    let asset_path = match kind {
+        WardrobeAssetKind::Skin => ctx.paths.wardrobe_skins_dir().join(format!("{sha256}.png")),
+        WardrobeAssetKind::Cape => ctx.paths.wardrobe_capes_dir().join(format!("{sha256}.png")),
+    };
+    if asset_path.exists() {
+        let _ = std::fs::remove_file(asset_path);
     }
     twilight_core::save_state(&ctx.paths, &guard).map_err(|e| e.to_string())?;
     Ok(guard.clone())
@@ -707,7 +774,7 @@ pub fn run() {
     let paths = LauncherPaths::resolve_default().expect("Failed initializing TwilightLauncher directories");
     let initial_state = twilight_core::load_or_init_state(&paths).expect("Failed loading TwilightLauncher state");
     let http = reqwest::Client::builder()
-        .user_agent("TwilightLauncher/0.1.0 (github.com/vivo6810/minecraftlauncher)")
+        .user_agent("TwilightLauncher/0.2.0 (github.com/vivo6810/minecraftlauncher)")
         .build()
         .expect("Failed building HTTP client");
 
@@ -730,6 +797,7 @@ pub fn run() {
             remove_account,
             import_and_equip_wardrobe_png,
             equip_existing_wardrobe_item,
+            remove_wardrobe_item,
             select_official_cape_cmd,
             search_modrinth_cmd,
             install_modrinth_to_profile_cmd,

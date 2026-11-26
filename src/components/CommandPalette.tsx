@@ -1,15 +1,14 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Box,
-  Command,
   Compass,
   FolderOpen,
-  Image,
+  Home,
   Play,
   Search,
   Settings,
-  Shield,
   SunMoon,
   User,
 } from "lucide-react";
@@ -59,71 +58,64 @@ export const CommandPalette: React.FC<Props> = ({
   const commands = useMemo<CommandItem[]>(() => {
     const items: CommandItem[] = [
       {
+        id: "nav-home",
+        label: "Profiles",
+        hint: "Start",
+        icon: <Home className="w-4 h-4" />,
+        run: () => onNavigate("home"),
+      },
+      {
         id: "nav-modrinth",
-        label: "Open Universal Modrinth Browser",
-        hint: "Mods • Modpacks • Resource Packs • Shaders • Data Packs",
+        label: "Modrinth",
+        hint: "Browse",
         icon: <Compass className="w-4 h-4" />,
         run: () => onNavigate("modrinth"),
       },
       {
         id: "nav-accounts",
-        label: "Open Skin & Cape Wardrobe",
-        hint: "Accounts • Custom .png Skins • Capes • History",
+        label: "Wardrobe",
+        hint: "Skins & Capes",
         icon: <User className="w-4 h-4" />,
         run: () => onNavigate("accounts"),
       },
       {
-        id: "toggle-theme",
-        label: "Switch Monotone Theme (Dark / Light)",
-        hint: "Appearance",
-        icon: <SunMoon className="w-4 h-4" />,
-        run: () => onToggleTheme(),
-      },
-      {
         id: "nav-settings",
-        label: "Configure Window Launch, Shield & Linux Gaming",
-        hint: "Settings",
+        label: "Settings",
+        hint: "Preferences",
         icon: <Settings className="w-4 h-4" />,
         run: () => onNavigate("settings"),
+      },
+      {
+        id: "toggle-theme",
+        label: "Toggle Theme",
+        hint: "Dark / Light",
+        icon: <SunMoon className="w-4 h-4" />,
+        run: () => onToggleTheme(),
       },
     ];
 
     for (const p of profiles) {
       items.push({
         id: `launch-${p.id}`,
-        label: `Launch ${p.name}`,
-        hint: `MC ${p.mc_version} • ${p.loader === "none" ? "Vanilla" : p.loader.toUpperCase()}`,
+        label: `Play ${p.name}`,
+        hint: p.mc_version,
         icon: <Play className="w-4 h-4" />,
         run: () => onLaunchProfile(p),
       });
       items.push({
         id: `files-${p.id}`,
-        label: `${p.name}: Open Built-in File Explorer & Config Editor`,
-        hint: "Profile Directory",
+        label: `${p.name} Files`,
+        hint: "Explorer",
         icon: <FolderOpen className="w-4 h-4" />,
         run: () => onOpenProfileTab(p, "files"),
-      });
-      items.push({
-        id: `shots-${p.id}`,
-        label: `${p.name}: View Screenshots Lightbox`,
-        hint: "/screenshots",
-        icon: <Image className="w-4 h-4" />,
-        run: () => onOpenProfileTab(p, "screenshots"),
-      });
-      items.push({
-        id: `shield-${p.id}`,
-        label: `${p.name}: Run Twilight Shield .jar Malware Scan`,
-        hint: "Security",
-        icon: <Shield className="w-4 h-4" />,
-        run: () => onOpenProfileTab(p, "shield"),
       });
     }
 
     for (const a of accounts) {
       items.push({
         id: `acct-${a.id}`,
-        label: `Switch Account: ${a.username}`,
-        hint: a.account_type === "microsoft" ? "Java Premium" : "Offline (authlib-injector)",
+        label: `Account: ${a.username}`,
+        hint: a.account_type === "microsoft" ? "Java" : "Offline",
         icon: <Box className="w-4 h-4" />,
         run: () => onSwitchAccount(a.id),
       });
@@ -132,9 +124,19 @@ export const CommandPalette: React.FC<Props> = ({
     const q = query.trim().toLowerCase();
     if (!q) return items;
     return items.filter(
-      (i) => i.label.toLowerCase().includes(q) || i.hint.toLowerCase().includes(q)
+      (i) =>
+        i.label.toLowerCase().includes(q) || i.hint.toLowerCase().includes(q)
     );
-  }, [query, profiles, accounts, onLaunchProfile, onOpenProfileTab, onNavigate, onSwitchAccount, onToggleTheme]);
+  }, [
+    query,
+    profiles,
+    accounts,
+    onLaunchProfile,
+    onOpenProfileTab,
+    onNavigate,
+    onSwitchAccount,
+    onToggleTheme,
+  ]);
 
   useEffect(() => {
     if (!open) return;
@@ -158,7 +160,9 @@ export const CommandPalette: React.FC<Props> = ({
     return () => window.removeEventListener("keydown", onKey);
   }, [open, commands, selectedIndex, onClose]);
 
-  return (
+  if (typeof document === "undefined") return null;
+
+  return createPortal(
     <AnimatePresence>
       {open && (
         <motion.div
@@ -166,17 +170,17 @@ export const CommandPalette: React.FC<Props> = ({
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
           onClick={onClose}
-          className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-start justify-center pt-24 px-4"
+          className="fixed inset-0 z-[100] bg-black/65 backdrop-blur-md flex items-start justify-center pt-24 px-4"
         >
           <motion.div
-            initial={{ opacity: 0, scale: 0.92, y: -16 }}
+            initial={{ opacity: 0, scale: 0.92, y: -12 }}
             animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.94, y: -10 }}
+            exit={{ opacity: 0, scale: 0.94, y: -8 }}
             transition={ELASTIC_SPRING}
             onClick={(e) => e.stopPropagation()}
-            className="w-full max-w-xl bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden"
+            className="w-full max-w-lg bg-surface border border-border rounded-2xl shadow-2xl overflow-hidden"
           >
-            <div className="flex items-center gap-3 px-4 py-3.5 border-b border-border">
+            <div className="flex items-center gap-3 px-4 py-3 border-b border-border">
               <Search className="w-4 h-4 text-muted shrink-0" />
               <input
                 autoFocus
@@ -185,62 +189,53 @@ export const CommandPalette: React.FC<Props> = ({
                   setQuery(e.target.value);
                   setSelectedIndex(0);
                 }}
-                placeholder="Type a command, profile, account, or action..."
-                className="w-full bg-transparent text-sm text-fg placeholder:text-muted focus:outline-none"
+                placeholder="Search..."
+                className="w-full bg-transparent text-xs text-fg placeholder:text-muted focus:outline-none"
               />
-              <span className="text-[11px] font-mono px-2 py-0.5 rounded bg-elevated text-muted border border-border">
+              <span className="text-[10px] font-mono px-2 py-0.5 rounded bg-elevated text-muted border border-border">
                 ESC
               </span>
             </div>
 
-            <div className="max-h-80 overflow-y-auto p-2 space-y-1">
+            <div className="max-h-72 overflow-y-auto p-2 space-y-1">
               {commands.length === 0 ? (
-                <div className="py-8 text-center text-xs text-muted">
-                  No matching commands found.
-                </div>
+                <div className="py-6 text-center text-xs text-muted">No results</div>
               ) : (
                 commands.map((cmd, idx) => {
                   const active = idx === selectedIndex;
                   return (
-                    <motion.button
+                    <button
                       key={cmd.id}
                       type="button"
-                      whileTap={{ scale: 0.985 }}
                       onMouseEnter={() => setSelectedIndex(idx)}
                       onClick={() => {
                         cmd.run();
                         onClose();
                       }}
-                      className={`w-full flex items-center justify-between gap-3 px-3 py-2.5 rounded-xl text-left transition-colors ${
+                      className={`w-full flex items-center justify-between px-3 py-2 rounded-xl text-xs transition-colors ${
                         active ? "bg-fg text-bg" : "text-fg hover:bg-elevated"
                       }`}
                     >
-                      <div className="flex items-center gap-3 min-w-0">
-                        <span className={active ? "text-bg" : "text-muted"}>{cmd.icon}</span>
-                        <span className="text-xs font-medium truncate">{cmd.label}</span>
-                      </div>
+                      <span className="flex items-center gap-2.5 font-medium">
+                        {cmd.icon}
+                        <span>{cmd.label}</span>
+                      </span>
                       <span
-                        className={`text-[11px] shrink-0 ${
+                        className={`text-[10px] font-mono ${
                           active ? "text-bg/75" : "text-muted"
                         }`}
                       >
                         {cmd.hint}
                       </span>
-                    </motion.button>
+                    </button>
                   );
                 })
               )}
             </div>
-
-            <div className="px-4 py-2 border-t border-border bg-elevated/40 flex items-center justify-between text-[11px] text-muted">
-              <span className="flex items-center gap-1.5">
-                <Command className="w-3 h-3" /> Navigate with ↑↓ • Execute with Enter
-              </span>
-              <span className="font-mono">Twilight Command Palette</span>
-            </div>
           </motion.div>
         </motion.div>
       )}
-    </AnimatePresence>
+    </AnimatePresence>,
+    document.body
   );
 };

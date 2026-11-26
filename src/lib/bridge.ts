@@ -27,8 +27,8 @@ export function isTauriDesktop(): boolean {
 }
 
 // --- Web Preview Persistence & Sample Monotone Assets (only used when !isTauriDesktop()) ---
-const STORAGE_KEY = "twilight_launcher_web_state_v1";
-const VFS_KEY = "twilight_launcher_web_vfs_v1";
+const STORAGE_KEY = "twilight_launcher_web_state_v2";
+const VFS_KEY = "twilight_launcher_web_vfs_v2";
 
 function makeMonotoneScreenshotSvgDataUrl(title: string, seed: number): string {
   const shadeA = seed % 2 === 0 ? "#121216" : "#18181e";
@@ -53,49 +53,6 @@ function makeMonotoneScreenshotSvgDataUrl(title: string, seed: number): string {
     <text x="36" y="498" fill="#a1a1aa" font-family="monospace" font-size="16">TWILIGHT // ${title}</text>
   </svg>`;
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
-}
-
-function makeSampleSkinPngDataUrl(primary = "#fafafa", secondary = "#27272a"): string {
-  if (typeof document === "undefined") return "";
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 64;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-  ctx.fillStyle = secondary;
-  ctx.fillRect(0, 0, 64, 64);
-  // Head front (8,8,8,8)
-  ctx.fillStyle = primary;
-  ctx.fillRect(8, 8, 8, 8);
-  // Eyes
-  ctx.fillStyle = "#09090b";
-  ctx.fillRect(9, 12, 2, 2);
-  ctx.fillRect(13, 12, 2, 2);
-  // Torso & limbs
-  ctx.fillStyle = "#d4d4d8";
-  ctx.fillRect(20, 20, 8, 12);
-  ctx.fillStyle = "#52525b";
-  ctx.fillRect(44, 20, 4, 12);
-  ctx.fillRect(4, 20, 4, 12);
-  return canvas.toDataURL("image/png");
-}
-
-function makeSampleCapePngDataUrl(): string {
-  if (typeof document === "undefined") return "";
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 32;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-  ctx.fillStyle = "#141418";
-  ctx.fillRect(0, 0, 64, 32);
-  ctx.fillStyle = "#fafafa";
-  ctx.fillRect(1, 1, 10, 16);
-  ctx.fillStyle = "#18181b";
-  ctx.fillRect(2, 2, 8, 14);
-  ctx.fillStyle = "#fafafa";
-  ctx.fillRect(4, 5, 4, 4);
-  return canvas.toDataURL("image/png");
 }
 
 interface WebVfsEntry {
@@ -177,10 +134,6 @@ function getInitialWebState(): LauncherStateSnapshot {
     // ignore
   }
 
-  const sampleSkin = makeSampleSkinPngDataUrl("#fafafa", "#1f1f24");
-  const sampleSkinAlt = makeSampleSkinPngDataUrl("#d4d4d8", "#09090b");
-  const sampleCape = makeSampleCapePngDataUrl();
-
   const initial: LauncherStateSnapshot = {
     settings: {
       window_launch_action: "minimize", // Spec default: Minimize on launch
@@ -208,105 +161,23 @@ function getInitialWebState(): LauncherStateSnapshot {
         block_high_risk_jars: true,
       },
     },
-    profiles: [
-      {
-        id: "vanilla-latest",
-        name: "Vanilla Crisp",
-        icon: "cube",
-        banner_screenshot: null,
-        mc_version: "1.21.4",
-        loader: "none", // Spec default: None
-        loader_version: "latest", // Spec default: Latest
-        auto_update_loader: true,
-        allocated_ram_mb: 4096,
-        fullscreen_override: null,
-        sandbox_override: null,
-        custom_jvm_args: [],
-        created_at: new Date().toISOString(),
-        last_played: new Date().toISOString(),
-        total_playtime_secs: 8420,
-        linked_modpack_id: null,
-      },
-      {
-        id: "fabric-shaders",
-        name: "Monolith Shaders",
-        icon: "sparkles",
-        banner_screenshot: null,
-        mc_version: "1.21.4",
-        loader: "fabric",
-        loader_version: "0.16.10",
-        auto_update_loader: true,
-        allocated_ram_mb: 6144,
-        fullscreen_override: null,
-        sandbox_override: null,
-        custom_jvm_args: [],
-        created_at: new Date().toISOString(),
-        last_played: null,
-        total_playtime_secs: 3120,
-        linked_modpack_id: null,
-      },
-    ],
+    profiles: [],
     accounts: [
       {
         id: "offline-1",
-        username: "TwilightRogue",
+        username: "Player",
         uuid: "e41f8b1c-4d23-3910-811a-9f88e72a1102",
         account_type: "offline",
         active: true,
-        skin_sha256: "sha256-monolith-classic",
+        skin_sha256: null,
         skin_variant: "classic",
-        custom_cape_sha256: "sha256-eclipse-cape",
+        custom_cape_sha256: null,
         official_cape_id: null,
         official_capes: [],
         external_yggdrasil_url: null,
       },
-      {
-        id: "msa-premium-1",
-        username: "VivoPrime",
-        uuid: "5a88c991-0e12-4c9a-9f81-1182c7d40a99",
-        account_type: "microsoft",
-        active: false,
-        skin_sha256: "sha256-ivory-slim",
-        skin_variant: "slim",
-        custom_cape_sha256: null,
-        official_cape_id: "migrator-cape",
-        official_capes: [
-          { id: "migrator-cape", alias: "Migrator", url: sampleCape, state: "ACTIVE" },
-          { id: "vanilla-cape", alias: "Vanilla", url: sampleCape, state: "INACTIVE" },
-          { id: "cherry-blossom", alias: "Cherry Blossom", url: sampleCape, state: "INACTIVE" },
-        ],
-        external_yggdrasil_url: null,
-      },
     ],
-    wardrobe: [
-      {
-        sha256: "sha256-monolith-classic",
-        name: "Obsidian Wanderer",
-        kind: "skin",
-        variant: "classic",
-        file_name: "obsidian_wanderer.png",
-        added_at: new Date().toISOString(),
-        preview_data_url: sampleSkin,
-      },
-      {
-        sha256: "sha256-ivory-slim",
-        name: "Ivory Phantom",
-        kind: "skin",
-        variant: "slim",
-        file_name: "ivory_phantom.png",
-        added_at: new Date().toISOString(),
-        preview_data_url: sampleSkinAlt,
-      },
-      {
-        sha256: "sha256-eclipse-cape",
-        name: "Twilight Eclipse Cape",
-        kind: "cape",
-        variant: "classic",
-        file_name: "twilight_eclipse_cape.png",
-        added_at: new Date().toISOString(),
-        preview_data_url: sampleCape,
-      },
-    ],
+    wardrobe: [],
   };
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
@@ -570,6 +441,23 @@ export const LauncherBridge = {
         acct.custom_cape_sha256 = sha256 || null;
       }
     }
+    saveWebState(s);
+    return s;
+  },
+
+  async removeWardrobeItem(
+    sha256: string,
+    kind: WardrobeAssetKind
+  ): Promise<LauncherStateSnapshot> {
+    if (isTauriDesktop()) {
+      return invoke("remove_wardrobe_item", { sha256, kind });
+    }
+    const s = getInitialWebState();
+    s.wardrobe = s.wardrobe.filter((w) => !(w.sha256 === sha256 && w.kind === kind));
+    s.accounts.forEach((a) => {
+      if (kind === "skin" && a.skin_sha256 === sha256) a.skin_sha256 = null;
+      if (kind === "cape" && a.custom_cape_sha256 === sha256) a.custom_cape_sha256 = null;
+    });
     saveWebState(s);
     return s;
   },

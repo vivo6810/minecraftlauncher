@@ -12,7 +12,7 @@ pub mod security;
 pub mod yggdrasil_local;
 
 use anyhow::Result;
-use models::{Account, LauncherSettings, LauncherStateSnapshot, Profile};
+use models::{Account, LauncherSettings, LauncherStateSnapshot};
 use paths::LauncherPaths;
 
 pub fn load_or_init_state(paths: &LauncherPaths) -> Result<LauncherStateSnapshot> {
@@ -24,18 +24,11 @@ pub fn load_or_init_state(paths: &LauncherPaths) -> Result<LauncherStateSnapshot
         }
     }
 
-    let default_profile = Profile {
-        name: "Vanilla Latest".to_string(),
-        mc_version: "1.21.4".to_string(),
-        ..Profile::default()
-    };
-    paths.ensure_profile_layout(&default_profile.id)?;
-
-    let default_account: Account = auth::create_offline_account("TwilightPlayer");
+    let default_account: Account = auth::create_offline_account("Player");
 
     let initial = LauncherStateSnapshot {
         settings: LauncherSettings::default(),
-        profiles: vec![default_profile],
+        profiles: Vec::new(),
         accounts: vec![default_account],
         wardrobe: Vec::new(),
     };
@@ -67,10 +60,18 @@ mod tests {
 
     #[test]
     fn default_profile_uses_none_loader_and_latest_loader_version() {
-        let profile = Profile::default();
+        let profile = models::Profile::default();
         assert_eq!(profile.loader, ModLoaderKind::None);
         assert_eq!(profile.loader_version, "latest");
         assert!(profile.auto_update_loader);
+    }
+
+    #[test]
+    fn fresh_state_has_no_default_profiles() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = LauncherPaths::from_root(temp.path().to_path_buf()).unwrap();
+        let state = load_or_init_state(&paths).unwrap();
+        assert!(state.profiles.is_empty());
     }
 
     #[test]
