@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
@@ -43,18 +43,29 @@ export const StartScreen: React.FC<Props> = ({
   onOpenUniversalModrinth,
   onCreateProfile,
 }) => {
+  const releaseVersions = useMemo(
+    () => mcVersions.filter((v) => v.type === "release").slice(0, 60),
+    [mcVersions]
+  );
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newVersion, setNewVersion] = useState(mcVersions[0]?.id || "26.3");
+  const [newVersion, setNewVersion] = useState(releaseVersions[0]?.id ?? "");
   const [newLoader, setNewLoader] = useState<ModLoaderKind>("none");
 
   useEffect(() => {
-    if (mcVersions[0]?.id && !newVersion) {
-      setNewVersion(mcVersions[0].id);
+    if (
+      releaseVersions.length > 0 &&
+      (!newVersion || !releaseVersions.some((v) => v.id === newVersion))
+    ) {
+      setNewVersion(releaseVersions[0].id);
     }
-  }, [mcVersions, newVersion]);
+  }, [releaseVersions, newVersion]);
+
+  const canCreate =
+    Boolean(newVersion) && releaseVersions.some((v) => v.id === newVersion);
 
   const submitNewProfile = async () => {
+    if (!canCreate) return;
     const created: Profile = {
       id: `prof-${Date.now()}`,
       name: newName.trim() || `Minecraft ${newVersion}`,
@@ -266,14 +277,11 @@ export const StartScreen: React.FC<Props> = ({
                         onChange={(e) => setNewVersion(e.target.value)}
                         className="w-full px-3.5 py-2 rounded-xl bg-elevated border border-border text-xs font-mono text-fg focus:outline-none"
                       >
-                        {mcVersions
-                          .filter((v) => v.type === "release")
-                          .slice(0, 60)
-                          .map((v) => (
-                            <option key={v.id} value={v.id}>
-                              {v.id}
-                            </option>
-                          ))}
+                        {releaseVersions.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.id}
+                          </option>
+                        ))}
                       </select>
                     </div>
 
@@ -308,8 +316,9 @@ export const StartScreen: React.FC<Props> = ({
                     </button>
                     <button
                       type="button"
+                      disabled={!canCreate}
                       onClick={() => void submitNewProfile()}
-                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-fg text-bg"
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-fg text-bg disabled:opacity-45"
                     >
                       Create
                     </button>

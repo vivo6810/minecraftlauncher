@@ -33,7 +33,7 @@ export const SettingsView: React.FC<Props> = ({
 }) => {
   const [javas, setJavas] = useState<JavaRuntimeInfo[]>([]);
   const [javaMajors, setJavaMajors] = useState<number[]>([8, 17, 21, 25]);
-  const [installingJavaMajor, setInstallingJavaMajor] = useState<number | null>(null);
+  const [installingJavaMajors, setInstallingJavaMajors] = useState<number[]>([]);
   const [offlineName, setOfflineName] = useState("");
   const [javaToken, setJavaToken] = useState("");
   const [addingOffline, setAddingOffline] = useState(false);
@@ -343,7 +343,7 @@ export const SettingsView: React.FC<Props> = ({
             .sort((a, b) => a - b)
             .map((major) => {
               const installed = javas.find((j) => j.major_version === major);
-              const busy = installingJavaMajor === major;
+              const busy = installingJavaMajors.includes(major);
               return (
                 <div
                   key={major}
@@ -363,8 +363,8 @@ export const SettingsView: React.FC<Props> = ({
                     type="button"
                     disabled={busy}
                     onClick={async () => {
-                      if (busy) return;
-                      setInstallingJavaMajor(major);
+                      if (installingJavaMajors.includes(major)) return;
+                      setInstallingJavaMajors((prev) => [...prev, major]);
                       try {
                         const info = await LauncherBridge.installPortableJava(major);
                         setJavas((prev) => [
@@ -375,7 +375,9 @@ export const SettingsView: React.FC<Props> = ({
                       } catch (err) {
                         onToast(String(err));
                       } finally {
-                        setInstallingJavaMajor(null);
+                        setInstallingJavaMajors((prev) =>
+                          prev.filter((m) => m !== major)
+                        );
                       }
                     }}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fg text-bg text-xs font-medium disabled:opacity-50"

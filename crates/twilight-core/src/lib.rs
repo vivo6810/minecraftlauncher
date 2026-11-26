@@ -169,15 +169,25 @@ mod tests {
         assert_eq!(loaders::neoforge_version_prefix_for_mc("1.21.4"), "21.4.");
         assert_eq!(loaders::neoforge_version_prefix_for_mc("26.3"), "26.3.0.");
         assert_eq!(loaders::neoforge_version_prefix_for_mc("26.1.2"), "26.1.2.");
+        assert!(loaders::neoforge_matches_mc_version(
+            "26.1.0.0-alpha.1+snapshot-1",
+            "26.1-snapshot-1"
+        ));
+        assert!(!loaders::neoforge_matches_mc_version(
+            "26.1.0.1-beta",
+            "26.1-snapshot-1"
+        ));
 
         let mut quilt = vec![
             "0.20.0-beta.9".to_string(),
             "0.30.2".to_string(),
             "0.31.0-beta.6".to_string(),
+            "0.31.0-rc.1".to_string(),
             "0.29.1".to_string(),
         ];
         quilt.sort_by(|a, b| loaders::compare_loader_versions_desc(a, b));
-        assert_eq!(quilt[0], "0.31.0-beta.6");
-        assert_eq!(quilt[1], "0.30.2");
+        assert_eq!(quilt[0], "0.31.0-rc.1");
+        assert_eq!(quilt[1], "0.31.0-beta.6");
+        assert_eq!(quilt[2], "0.30.2");
     }
 }

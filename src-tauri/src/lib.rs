@@ -14,6 +14,7 @@ pub struct AppContext {
     pub paths: LauncherPaths,
     pub http: reqwest::Client,
     pub state: Mutex<LauncherStateSnapshot>,
+    pub wardrobe_fs_lock: tokio::sync::Mutex<()>,
     pub skin_sync_lock: tokio::sync::Mutex<()>,
     pub skin_sync_seq: Mutex<std::collections::HashMap<String, u64>>,
 }
@@ -197,22 +198,29 @@ async fn import_and_equip_wardrobe_png(
         .decode(clean_b64)
         .map_err(|e| format!("Invalid base64 PNG: {e}"))?;
 
-    let item: WardrobeItem = twilight_core::auth::import_png_to_wardrobe(
-        &ctx.paths,
-        &png_bytes,
-        &name,
-        kind,
-        variant,
-    )
-    .map_err(|e| e.to_string())?;
+    let (committed_snapshot, sync_seq) = {
+        let _fs_guard = ctx.wardrobe_fs_lock.lock().await;
 
-    let sync_seq = {
+        let item: WardrobeItem = twilight_core::auth::import_png_to_wardrobe(
+            &ctx.paths,
+            &png_bytes,
+            &name,
+            kind,
+            variant,
+        )
+        .map_err(|e| e.to_string())?;
+
         let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
-        if !guard.wardrobe.iter().any(|w| w.sha256 == item.sha256 && w.kind == item.kind) {
-            guard.wardrobe.insert(0, item.clone());
+        let mut staged = guard.clone();
+        if !staged
+            .wardrobe
+            .iter()
+            .any(|w| w.sha256 == item.sha256 && w.kind == item.kind)
+        {
+            staged.wardrobe.insert(0, item.clone());
         }
         let mut needs_sync = false;
-        if let Some(acct) = guard.accounts.iter_mut().find(|a| a.id == account_id) {
+        if let Some(acct) = staged.accounts.iter_mut().find(|a| a.id == account_id) {
             match kind {
                 WardrobeAssetKind::Skin => {
                     acct.skin_sha256 = Some(item.sha256.clone());
@@ -226,23 +234,24 @@ async fn import_and_equip_wardrobe_png(
                 }
             }
         }
-        twilight_core::save_state(&ctx.paths, &guard).map_err(|e| e.to_string())?;
-        if needs_sync {
+        twilight_core::save_state(&ctx.paths, &staged).map_err(|e| e.to_string())?;
+        *guard = staged.clone();
+        let next_seq = if needs_sync {
             let mut seq_map = ctx.skin_sync_seq.lock().map_err(|e| e.to_string())?;
             let entry = seq_map.entry(account_id.clone()).or_insert(0);
             *entry += 1;
             Some(*entry)
         } else {
             None
-        }
+        };
+        (staged, next_seq)
     };
 
     if let Some(my_seq) = sync_seq {
         sync_latest_premium_skin(&ctx, &account_id, my_seq).await?;
     }
 
-    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
-    Ok(guard.clone())
+    Ok(committed_snapshot)
 }
 
 async fn sync_latest_premium_skin(
@@ -251,16 +260,14 @@ async fn sync_latest_premium_skin(
     my_seq: u64,
 ) -> Result<(), String> {
     let _serial = ctx.skin_sync_lock.lock().await;
-    {
+
+    let upload_info = {
+        let guard = ctx.state.lock().map_err(|e| e.to_string())?;
         let seq_map = ctx.skin_sync_seq.lock().map_err(|e| e.to_string())?;
         let latest_seq = seq_map.get(account_id).copied().unwrap_or(0);
         if latest_seq != my_seq {
             return Ok(());
         }
-    }
-
-    let upload_info = {
-        let guard = ctx.state.lock().map_err(|e| e.to_string())?;
         guard
             .accounts
             .iter()
@@ -312,10 +319,11 @@ async fn equip_existing_wardrobe_item(
     if !sha256.is_empty() && !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Invalid wardrobe asset hash".to_string());
     }
-    let sync_seq = {
+    let (committed_snapshot, sync_seq) = {
         let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
+        let mut staged = guard.clone();
         let mut needs_sync = false;
-        if let Some(acct) = guard.accounts.iter_mut().find(|a| a.id == account_id) {
+        if let Some(acct) = staged.accounts.iter_mut().find(|a| a.id == account_id) {
             match kind {
                 WardrobeAssetKind::Skin => {
                     acct.skin_sha256 = if sha256.is_empty() {
@@ -339,27 +347,28 @@ async fn equip_existing_wardrobe_item(
                 }
             }
         }
-        twilight_core::save_state(&ctx.paths, &guard).map_err(|e| e.to_string())?;
-        if needs_sync {
+        twilight_core::save_state(&ctx.paths, &staged).map_err(|e| e.to_string())?;
+        *guard = staged.clone();
+        let next_seq = if needs_sync {
             let mut seq_map = ctx.skin_sync_seq.lock().map_err(|e| e.to_string())?;
             let entry = seq_map.entry(account_id.clone()).or_insert(0);
             *entry += 1;
             Some(*entry)
         } else {
             None
-        }
+        };
+        (staged, next_seq)
     };
 
     if let Some(my_seq) = sync_seq {
         sync_latest_premium_skin(&ctx, &account_id, my_seq).await?;
     }
 
-    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
-    Ok(guard.clone())
+    Ok(committed_snapshot)
 }
 
 #[tauri::command]
-fn remove_wardrobe_item(
+async fn remove_wardrobe_item(
     ctx: State<'_, AppContext>,
     sha256: String,
     kind: WardrobeAssetKind,
@@ -367,6 +376,7 @@ fn remove_wardrobe_item(
     if sha256.is_empty() || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Invalid wardrobe asset hash".to_string());
     }
+    let _fs_guard = ctx.wardrobe_fs_lock.lock().await;
     let asset_path = match kind {
         WardrobeAssetKind::Skin => ctx.paths.wardrobe_skins_dir().join(format!("{sha256}.png")),
         WardrobeAssetKind::Cape => ctx.paths.wardrobe_capes_dir().join(format!("{sha256}.png")),
@@ -864,6 +874,7 @@ pub fn run() {
             paths,
             http,
             state: Mutex::new(initial_state),
+            wardrobe_fs_lock: tokio::sync::Mutex::new(()),
             skin_sync_lock: tokio::sync::Mutex::new(()),
             skin_sync_seq: Mutex::new(std::collections::HashMap::new()),
         })

@@ -82,33 +82,89 @@ pub fn neoforge_version_prefix_for_mc(mc_version: &str) -> String {
     }
 }
 
-/// Parses a loader version string for newest-first semantic sorting.
-/// Higher `(numeric_parts, is_release, prerelease_num)` sorts earlier.
+/// Checks whether a NeoForge version string matches a given Minecraft version.
+/// - For snapshot versions (`"<base>-snapshot-<n>"`), requires `<prefix>...+snapshot-<n>`.
+/// - For release versions, requires `<prefix>...` and excludes `+snapshot-` builds.
+pub fn neoforge_matches_mc_version(neoforge_ver: &str, mc_version: &str) -> bool {
+    let prefix = neoforge_version_prefix_for_mc(mc_version);
+    if !neoforge_ver.starts_with(&prefix) {
+        return false;
+    }
+    if let Some((_, snap_num)) = mc_version.trim().split_once("-snapshot-") {
+        let required_suffix = format!("+snapshot-{snap_num}");
+        neoforge_ver.ends_with(&required_suffix)
+    } else {
+        !neoforge_ver.contains("+snapshot-")
+    }
+}
+
+/// Compares two loader version strings in newest-first SemVer 2.0.0 order:
+/// - Excludes `+build` metadata from precedence.
+/// - Compares dot-separated core identifiers numerically when numeric, else lexically.
+/// - Places stable releases ahead of prereleases for the same core version.
+/// - Compares prerelease dot-separated identifiers per SemVer 2.0.0 §11.4 (numeric < textual;
+///   both numeric compared numerically; both textual compared lexically in ASCII order).
 pub fn compare_loader_versions_desc(a: &str, b: &str) -> Ordering {
-    fn parse_key(v: &str) -> (Vec<u32>, bool, Vec<u32>, &str) {
-        let (core, pre) = match v.split_once('-') {
+    compare_semver_asc(b, a)
+}
+
+fn compare_semver_asc(a: &str, b: &str) -> Ordering {
+    fn split_pre(v: &str) -> (&str, Option<&str>) {
+        let clean = v.split('+').next().unwrap_or(v);
+        match clean.split_once('-') {
             Some((c, p)) => (c, Some(p)),
-            None => (v, None),
+            None => (clean, None),
+        }
+    }
+    let is_digits = |s: &str| !s.is_empty() && s.chars().all(|c| c.is_ascii_digit());
+
+    let (core_a, pre_a) = split_pre(a);
+    let (core_b, pre_b) = split_pre(b);
+
+    let segs_a: Vec<&str> = core_a.split('.').collect();
+    let segs_b: Vec<&str> = core_b.split('.').collect();
+    let max_core = segs_a.len().max(segs_b.len());
+    for i in 0..max_core {
+        let sa = segs_a.get(i).copied().unwrap_or("0");
+        let sb = segs_b.get(i).copied().unwrap_or("0");
+        let ord = if is_digits(sa) && is_digits(sb) {
+            sa.parse::<u64>()
+                .unwrap_or(0)
+                .cmp(&sb.parse::<u64>().unwrap_or(0))
+        } else {
+            sa.cmp(sb)
         };
-        let nums: Vec<u32> = core
-            .split('.')
-            .map(|s| s.parse::<u32>().unwrap_or(0))
-            .collect();
-        let is_stable = pre.is_none();
-        let pre_nums: Vec<u32> = pre
-            .map(|p| {
-                p.split(|c: char| !c.is_ascii_digit())
-                    .filter(|s| !s.is_empty())
-                    .filter_map(|s| s.parse::<u32>().ok())
-                    .collect()
-            })
-            .unwrap_or_default();
-        (nums, is_stable, pre_nums, v)
+        if ord != Ordering::Equal {
+            return ord;
+        }
     }
 
-    let ka = parse_key(a);
-    let kb = parse_key(b);
-    kb.cmp(&ka)
+    match (pre_a, pre_b) {
+        (None, None) => Ordering::Equal,
+        (None, Some(_)) => Ordering::Greater,
+        (Some(_), None) => Ordering::Less,
+        (Some(pa), Some(pb)) => {
+            let ids_a: Vec<&str> = pa.split('.').collect();
+            let ids_b: Vec<&str> = pb.split('.').collect();
+            for (ia, ib) in ids_a.iter().zip(ids_b.iter()) {
+                let da = is_digits(ia);
+                let db = is_digits(ib);
+                let ord = match (da, db) {
+                    (true, true) => ia
+                        .parse::<u64>()
+                        .unwrap_or(0)
+                        .cmp(&ib.parse::<u64>().unwrap_or(0)),
+                    (true, false) => Ordering::Less,
+                    (false, true) => Ordering::Greater,
+                    (false, false) => ia.cmp(ib),
+                };
+                if ord != Ordering::Equal {
+                    return ord;
+                }
+            }
+            ids_a.len().cmp(&ids_b.len())
+        }
+    }
 }
 
 /// Fetches available mod loader versions for a given Minecraft version, ordered newest-first.
@@ -168,13 +224,12 @@ pub async fn list_loader_versions(
                 .error_for_status()?
                 .json()
                 .await?;
-            let prefix = neoforge_version_prefix_for_mc(mc_version);
             let mut matched: Vec<LoaderVersionOption> = resp
                 .versions
                 .into_iter()
-                .filter(|v| v.starts_with(&prefix))
+                .filter(|v| neoforge_matches_mc_version(v, mc_version))
                 .map(|v| LoaderVersionOption {
-                    stable: !v.contains("beta") && !v.contains("alpha"),
+                    stable: !v.contains('-') && !v.contains("beta") && !v.contains("alpha"),
                     version: v,
                     loader: ModLoaderKind::Neoforge,
                 })

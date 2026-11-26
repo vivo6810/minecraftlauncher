@@ -137,7 +137,6 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
 
   const handleEquipDefaultSteve = async () => {
     if (!activeAccount) return;
-    setSkinVariant("classic");
     try {
       const next = await LauncherBridge.importAndEquipWardrobePng(
         activeAccount.id,
@@ -154,7 +153,6 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
 
   const handleEquipSkin = async (sha256: string, variant: SkinVariant) => {
     if (!activeAccount) return;
-    setSkinVariant(variant);
     try {
       const next = await LauncherBridge.equipExistingWardrobeItem(
         activeAccount.id,
@@ -169,7 +167,6 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
   };
 
   const handleSwitchVariant = async (nextVariant: SkinVariant) => {
-    setSkinVariant(nextVariant);
     if (!activeAccount) return;
     try {
       const next = await LauncherBridge.equipExistingWardrobeItem(

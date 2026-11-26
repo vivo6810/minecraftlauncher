@@ -83,17 +83,29 @@ where
     )
     .await?;
 
-    // 5. Ensure Automatic Portable Java Runtime matching Mojang's `javaVersion.majorVersion` (8 / 17 / 21 / 25+)
-    let required_java = vanilla_detail
+    // 5. Ensure Automatic Portable Java Runtime matching Mojang's `javaVersion.majorVersion` (8 / 17 / 21 / 25+),
+    // falling back to `required_java_major_for_mc` if an older metadata runtime (e.g. Java 16 on macOS/aarch64 for 1.17.1) is unavailable
+    let fallback_java = required_java_major_for_mc(&profile.mc_version);
+    let primary_java = vanilla_detail
         .java_version
         .as_ref()
         .map(|jv| jv.major_version)
-        .unwrap_or_else(|| required_java_major_for_mc(&profile.mc_version));
+        .unwrap_or(fallback_java);
     on_progress(
-        format!("Verifying Portable OpenJDK {required_java}..."),
+        format!("Verifying Portable OpenJDK {primary_java}..."),
         0.74,
     );
-    let java_rt = ensure_portable_java(client, paths, required_java).await?;
+    let java_rt = match ensure_portable_java(client, paths, primary_java).await {
+        Ok(rt) => rt,
+        Err(_) if fallback_java != primary_java => {
+            on_progress(
+                format!("Falling back to Portable OpenJDK {fallback_java}..."),
+                0.76,
+            );
+            ensure_portable_java(client, paths, fallback_java).await?
+        }
+        Err(err) => return Err(err),
+    };
 
     // 6. Prepare Isolated Mod Loader JARs (`loaders/<loader>/...`)
     let mut main_class = vanilla_detail.main_class.clone();

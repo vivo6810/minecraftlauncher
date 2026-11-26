@@ -27,8 +27,31 @@ export function isTauriDesktop(): boolean {
 }
 
 // --- Web Preview Persistence & Sample Monotone Assets (only used when !isTauriDesktop()) ---
+const LEGACY_STORAGE_KEY_V1 = "twilight_launcher_web_state_v1";
+const LEGACY_VFS_KEY_V1 = "twilight_launcher_web_vfs_v1";
 const STORAGE_KEY = "twilight_launcher_web_state_v2";
 const VFS_KEY = "twilight_launcher_web_vfs_v2";
+
+function migrateLegacyWebStorageIfNeeded(): void {
+  try {
+    if (!localStorage.getItem(STORAGE_KEY)) {
+      const legacyState = localStorage.getItem(LEGACY_STORAGE_KEY_V1);
+      if (legacyState) {
+        const parsedState = JSON.parse(legacyState);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(parsedState));
+      }
+    }
+    if (!localStorage.getItem(VFS_KEY)) {
+      const legacyVfs = localStorage.getItem(LEGACY_VFS_KEY_V1);
+      if (legacyVfs) {
+        const parsedVfs = JSON.parse(legacyVfs);
+        localStorage.setItem(VFS_KEY, JSON.stringify(parsedVfs));
+      }
+    }
+  } catch {
+    // Ignore corrupt legacy entries
+  }
+}
 
 function makeMonotoneScreenshotSvgDataUrl(title: string, seed: number): string {
   const shadeA = seed % 2 === 0 ? "#121216" : "#18181e";
@@ -65,6 +88,7 @@ interface WebVfsEntry {
 type WebVfsMap = Record<string, Record<string, WebVfsEntry>>;
 
 function loadWebVfs(profiles: Profile[]): WebVfsMap {
+  migrateLegacyWebStorageIfNeeded();
   try {
     const raw = localStorage.getItem(VFS_KEY);
     if (raw) return JSON.parse(raw);
@@ -127,6 +151,7 @@ function saveWebVfs(vfs: WebVfsMap) {
 }
 
 function getInitialWebState(): LauncherStateSnapshot {
+  migrateLegacyWebStorageIfNeeded();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
@@ -276,35 +301,55 @@ export const LauncherBridge = {
       return invoke("fetch_loader_versions", { loader, mcVersion });
     }
 
-    const compareDesc = (a: string, b: string): number => {
-      const parse = (v: string) => {
-        const idx = v.indexOf("-");
-        const core = idx === -1 ? v : v.slice(0, idx);
-        const pre = idx === -1 ? "" : v.slice(idx + 1);
-        const nums = core.split(".").map((n) => Number.parseInt(n, 10) || 0);
-        const preNums = pre
-          ? pre
-              .split(/\D+/)
-              .filter(Boolean)
-              .map((n) => Number.parseInt(n, 10) || 0)
-          : [];
-        return { nums, isStable: pre === "", preNums };
+    const compareSemverAsc = (a: string, b: string): number => {
+      const stripBuild = (v: string) => v.split("+")[0];
+      const splitPre = (v: string): [string, string | null] => {
+        const clean = stripBuild(v);
+        const idx = clean.indexOf("-");
+        return idx === -1 ? [clean, null] : [clean.slice(0, idx), clean.slice(idx + 1)];
       };
-      const ka = parse(a);
-      const kb = parse(b);
-      const len = Math.max(ka.nums.length, kb.nums.length);
-      for (let i = 0; i < len; i++) {
-        const diff = (kb.nums[i] ?? 0) - (ka.nums[i] ?? 0);
-        if (diff !== 0) return diff;
+      const isDigits = (s: string) => s.length > 0 && /^\d+$/.test(s);
+
+      const [coreA, preA] = splitPre(a);
+      const [coreB, preB] = splitPre(b);
+      const segsA = coreA.split(".");
+      const segsB = coreB.split(".");
+      const maxCore = Math.max(segsA.length, segsB.length);
+      for (let i = 0; i < maxCore; i++) {
+        const sa = segsA[i] ?? "0";
+        const sb = segsB[i] ?? "0";
+        if (isDigits(sa) && isDigits(sb)) {
+          const diff = Number(sa) - Number(sb);
+          if (diff !== 0) return diff;
+        } else if (sa !== sb) {
+          return sa < sb ? -1 : 1;
+        }
       }
-      if (ka.isStable !== kb.isStable) return kb.isStable ? 1 : -1;
-      const plen = Math.max(ka.preNums.length, kb.preNums.length);
-      for (let i = 0; i < plen; i++) {
-        const diff = (kb.preNums[i] ?? 0) - (ka.preNums[i] ?? 0);
-        if (diff !== 0) return diff;
+      if (preA === null && preB === null) return 0;
+      if (preA === null) return 1;
+      if (preB === null) return -1;
+
+      const idsA = preA.split(".");
+      const idsB = preB.split(".");
+      const minLen = Math.min(idsA.length, idsB.length);
+      for (let i = 0; i < minLen; i++) {
+        const ia = idsA[i];
+        const ib = idsB[i];
+        const da = isDigits(ia);
+        const db = isDigits(ib);
+        if (da && db) {
+          const diff = Number(ia) - Number(ib);
+          if (diff !== 0) return diff;
+        } else if (da !== db) {
+          return da ? -1 : 1;
+        } else if (ia !== ib) {
+          return ia < ib ? -1 : 1;
+        }
       }
-      return b.localeCompare(a);
+      return idsA.length - idsB.length;
     };
+
+    const compareDesc = (a: string, b: string): number => compareSemverAsc(b, a);
 
     const neoforgePrefix = (mc: string): string => {
       const base = mc.split("-")[0].trim();
@@ -313,6 +358,16 @@ export const LauncherBridge = {
         return rem.includes(".") ? `${rem}.` : `${rem}.0.`;
       }
       return base.split(".").length === 2 ? `${base}.0.` : `${base}.`;
+    };
+
+    const neoforgeMatchesMc = (nfVer: string, mc: string): boolean => {
+      if (!nfVer.startsWith(neoforgePrefix(mc))) return false;
+      const snapIdx = mc.indexOf("-snapshot-");
+      if (snapIdx !== -1) {
+        const snapNum = mc.slice(snapIdx + "-snapshot-".length);
+        return nfVer.endsWith(`+snapshot-${snapNum}`);
+      }
+      return !nfVer.includes("+snapshot-");
     };
 
     try {
@@ -348,27 +403,26 @@ export const LauncherBridge = {
         const r = await fetch("/api-neoforge/api/maven/versions/releases/net/neoforged/neoforge");
         if (r.ok) {
           const data: { versions: string[] } = await r.json();
-          const pref = neoforgePrefix(mcVersion);
           const matched = data.versions
-            .filter((v) => v.startsWith(pref))
+            .filter((v) => neoforgeMatchesMc(v, mcVersion))
             .sort(compareDesc)
             .slice(0, 25)
             .map((v) => ({
               version: v,
-              stable: !v.includes("beta") && !v.includes("alpha"),
+              stable: !v.includes("-") && !v.includes("beta") && !v.includes("alpha"),
               loader: "neoforge" as const,
             }));
           if (matched.length > 0) return matched;
         }
       }
       if (loader === "forge") {
-        const [metaRes, promoRes] = await Promise.all([
-          fetch("/api-forge/net/minecraftforge/forge/maven-metadata.json"),
-          fetch("/api-forge/net/minecraftforge/forge/promotions_slim.json"),
-        ]);
-        const promos: Record<string, string> = promoRes.ok
-          ? ((await promoRes.json()).promos ?? {})
-          : {};
+        const metaRes = await fetch("/api-forge/net/minecraftforge/forge/maven-metadata.json");
+        const promos: Record<string, string> = await fetch(
+          "/api-forge/net/minecraftforge/forge/promotions_slim.json"
+        )
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => (j && typeof j.promos === "object" && j.promos ? j.promos : {}))
+          .catch(() => ({}));
         const rec = promos[`${mcVersion}-recommended`];
         if (metaRes.ok) {
           const allMap: Record<string, string[]> = await metaRes.json();
@@ -390,21 +444,39 @@ export const LauncherBridge = {
       // Offline fallback below
     }
 
-    const nfPref = neoforgePrefix(mcVersion);
+    const FORGE_VERIFIED_FALLBACKS: Record<string, string[]> = {
+      "26.3": ["66.1.9", "66.1.8"],
+      "26.2": ["65.1.6", "65.1.5"],
+      "26.1.2": ["64.1.6", "64.1.5"],
+      "26.1.1": ["63.0.2"],
+      "26.1": ["62.0.9"],
+      "1.21.11": ["61.2.5", "61.2.4"],
+      "1.21.4": ["54.1.0", "54.0.18"],
+      "1.20.4": ["49.1.13"],
+      "1.20.1": ["47.3.12", "47.2.20"],
+      "1.19.4": ["45.3.7"],
+      "1.18.2": ["40.2.21"],
+      "1.16.5": ["36.2.42"],
+      "1.12.2": ["14.23.5.2860"],
+      "1.8.9": ["11.15.1.2318"],
+    };
+
+    const NEOFORGE_VERIFIED_FALLBACKS: Record<string, string[]> = {
+      "26.3": ["26.3.0.118", "26.3.0.117"],
+      "26.1.2": ["26.1.2.130", "26.1.2.129"],
+      "1.21.4": ["21.4.88-beta", "21.4.76-beta"],
+      "1.21.1": ["21.1.268", "21.1.92"],
+    };
+
     const defaults: Record<Exclude<ModLoaderKind, "none">, string[]> = {
       fabric: ["0.20.1", "0.20.0", "0.19.5", "0.18.4"],
       quilt: ["0.30.2", "0.31.0-beta.6", "0.30.1", "0.29.2"],
-      neoforge: [`${nfPref}118`, `${nfPref}117`, `${nfPref}116`],
-      forge:
-        mcVersion === "26.3"
-          ? ["66.1.9", "66.1.8", "66.1.5"]
-          : mcVersion.startsWith("26.")
-            ? ["65.1.6", "64.1.6", "62.0.9"]
-            : ["61.2.5", "54.1.2", "47.3.12"],
+      neoforge: NEOFORGE_VERIFIED_FALLBACKS[mcVersion] ?? [],
+      forge: FORGE_VERIFIED_FALLBACKS[mcVersion] ?? [],
     };
     return defaults[loader].map((v, i) => ({
       version: v,
-      stable: !v.includes("beta") && (i === 0 || loader !== "forge"),
+      stable: !v.includes("-") && !v.includes("beta") && (i === 0 || loader !== "forge"),
       loader,
     }));
   },
