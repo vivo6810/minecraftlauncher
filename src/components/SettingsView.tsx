@@ -34,23 +34,36 @@ export const SettingsView: React.FC<Props> = ({
   const [javas, setJavas] = useState<JavaRuntimeInfo[]>([]);
   const [offlineName, setOfflineName] = useState("");
   const [javaToken, setJavaToken] = useState("");
+  const [addingOffline, setAddingOffline] = useState(false);
+  const [connectingJava, setConnectingJava] = useState(false);
+  const [busyAccountId, setBusyAccountId] = useState<string | null>(null);
 
   useEffect(() => {
     LauncherBridge.listPortableJavas().then(setJavas);
   }, []);
 
   const handleAddOffline = async () => {
+    if (addingOffline) return;
     const clean = offlineName.trim();
     if (!clean) return;
-    const next = await LauncherBridge.createOfflineAccount(clean, null);
-    onStateChange(next);
-    setOfflineName("");
-    onToast(`Added ${clean}`);
+    setAddingOffline(true);
+    try {
+      const next = await LauncherBridge.createOfflineAccount(clean, null);
+      onStateChange(next);
+      setOfflineName("");
+      onToast(`Added ${clean}`);
+    } catch (err) {
+      onToast(String(err));
+    } finally {
+      setAddingOffline(false);
+    }
   };
 
   const handleConnectJava = async () => {
+    if (connectingJava) return;
     const clean = javaToken.trim();
     if (!clean) return;
+    setConnectingJava(true);
     try {
       const next = await LauncherBridge.connectMicrosoftToken(clean);
       onStateChange(next);
@@ -58,6 +71,34 @@ export const SettingsView: React.FC<Props> = ({
       onToast("Java account connected");
     } catch (err) {
       onToast(String(err));
+    } finally {
+      setConnectingJava(false);
+    }
+  };
+
+  const handleActivateAccount = async (accountId: string) => {
+    if (busyAccountId) return;
+    setBusyAccountId(accountId);
+    try {
+      const next = await LauncherBridge.setActiveAccount(accountId);
+      onStateChange(next);
+    } catch (err) {
+      onToast(String(err));
+    } finally {
+      setBusyAccountId(null);
+    }
+  };
+
+  const handleRemoveAccount = async (accountId: string) => {
+    if (busyAccountId) return;
+    setBusyAccountId(accountId);
+    try {
+      const next = await LauncherBridge.removeAccount(accountId);
+      onStateChange(next);
+    } catch (err) {
+      onToast(String(err));
+    } finally {
+      setBusyAccountId(null);
     }
   };
 
@@ -91,11 +132,9 @@ export const SettingsView: React.FC<Props> = ({
                 ) : (
                   <button
                     type="button"
-                    onClick={async () => {
-                      const next = await LauncherBridge.setActiveAccount(acct.id);
-                      onStateChange(next);
-                    }}
-                    className="px-2.5 py-1 rounded-lg bg-elevated border border-border text-[11px] font-medium hover:border-fg/40"
+                    disabled={busyAccountId === acct.id}
+                    onClick={() => void handleActivateAccount(acct.id)}
+                    className="px-2.5 py-1 rounded-lg bg-elevated border border-border text-[11px] font-medium hover:border-fg/40 disabled:opacity-45"
                   >
                     Use
                   </button>
@@ -104,12 +143,10 @@ export const SettingsView: React.FC<Props> = ({
                 {accounts.length > 1 && (
                   <button
                     type="button"
+                    disabled={busyAccountId === acct.id}
                     aria-label={`Remove ${acct.username}`}
-                    onClick={async () => {
-                      const next = await LauncherBridge.removeAccount(acct.id);
-                      onStateChange(next);
-                    }}
-                    className="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-elevated"
+                    onClick={() => void handleRemoveAccount(acct.id)}
+                    className="p-1.5 rounded-lg text-muted hover:text-fg hover:bg-elevated disabled:opacity-45"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -124,17 +161,19 @@ export const SettingsView: React.FC<Props> = ({
             <div className="flex items-center gap-2">
               <input
                 value={offlineName}
+                disabled={addingOffline}
                 onChange={(e) => setOfflineName(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void handleAddOffline();
                 }}
                 placeholder="Username"
-                className="w-44 px-3 py-1.5 rounded-lg bg-elevated border border-border text-xs text-fg focus:outline-none focus:border-fg"
+                className="w-44 px-3 py-1.5 rounded-lg bg-elevated border border-border text-xs text-fg focus:outline-none focus:border-fg disabled:opacity-50"
               />
               <button
                 type="button"
+                disabled={addingOffline}
                 onClick={() => void handleAddOffline()}
-                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-fg text-bg text-xs font-semibold"
+                className="inline-flex items-center gap-1 px-3 py-1.5 rounded-lg bg-fg text-bg text-xs font-semibold disabled:opacity-50"
               >
                 <Plus className="w-3.5 h-3.5" /> Add
               </button>
@@ -148,17 +187,19 @@ export const SettingsView: React.FC<Props> = ({
               <input
                 type="password"
                 value={javaToken}
+                disabled={connectingJava}
                 onChange={(e) => setJavaToken(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.key === "Enter") void handleConnectJava();
                 }}
                 placeholder="Minecraft access token"
-                className="w-44 px-3 py-1.5 rounded-lg bg-elevated border border-border text-xs font-mono text-fg focus:outline-none focus:border-fg"
+                className="w-44 px-3 py-1.5 rounded-lg bg-elevated border border-border text-xs font-mono text-fg focus:outline-none focus:border-fg disabled:opacity-50"
               />
               <button
                 type="button"
+                disabled={connectingJava}
                 onClick={() => void handleConnectJava()}
-                className="px-3 py-1.5 rounded-lg bg-fg text-bg text-xs font-semibold"
+                className="px-3 py-1.5 rounded-lg bg-fg text-bg text-xs font-semibold disabled:opacity-50"
               >
                 Connect
               </button>
@@ -301,12 +342,16 @@ export const SettingsView: React.FC<Props> = ({
                 <button
                   type="button"
                   onClick={async () => {
-                    const info = await LauncherBridge.installPortableJava(major);
-                    setJavas((prev) => [
-                      ...prev.filter((x) => x.major_version !== major),
-                      info,
-                    ]);
-                    onToast(`OpenJDK ${major} ready`);
+                    try {
+                      const info = await LauncherBridge.installPortableJava(major);
+                      setJavas((prev) => [
+                        ...prev.filter((x) => x.major_version !== major),
+                        info,
+                      ]);
+                      onToast(`OpenJDK ${major} ready`);
+                    } catch (err) {
+                      onToast(String(err));
+                    }
                   }}
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fg text-bg text-xs font-medium"
                 >

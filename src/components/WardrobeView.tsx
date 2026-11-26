@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
 import { LauncherBridge } from "../lib/bridge";
@@ -19,21 +19,33 @@ interface Props {
 
 export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast }) => {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
+  const [renderLeftContent, setRenderLeftContent] = useState(true);
+  const leftPanelRef = useRef<HTMLDivElement | null>(null);
+  const collapseBtnRef = useRef<HTMLButtonElement | null>(null);
   const skinInputRef = useRef<HTMLInputElement | null>(null);
   const capeInputRef = useRef<HTMLInputElement | null>(null);
 
   const activeAccount =
     state.accounts.find((a) => a.active) ?? state.accounts[0];
+  const isMicrosoft = activeAccount?.account_type === "microsoft";
 
   const [skinVariant, setSkinVariant] = useState<SkinVariant>(
     activeAccount?.skin_variant ?? "classic"
   );
 
+  useEffect(() => {
+    setSkinVariant(activeAccount?.skin_variant ?? "classic");
+  }, [activeAccount?.id, activeAccount?.skin_variant]);
+
   const steveDataUrl = useMemo(() => getDefaultSteveSkinDataUrl(), []);
 
-  const savedSkins = useMemo(
+  const allSkins = useMemo(
     () => state.wardrobe.filter((w) => w.kind === "skin"),
     [state.wardrobe]
+  );
+  const savedSkins = useMemo(
+    () => allSkins.filter((w) => w.preview_data_url !== steveDataUrl),
+    [allSkins, steveDataUrl]
   );
   const savedCapes = useMemo(
     () => state.wardrobe.filter((w) => w.kind === "cape"),
@@ -43,14 +55,14 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
   const activeSkinUrl = useMemo(() => {
     if (!activeAccount?.skin_sha256) return null;
     return (
-      savedSkins.find((s) => s.sha256 === activeAccount.skin_sha256)
+      allSkins.find((s) => s.sha256 === activeAccount.skin_sha256)
         ?.preview_data_url ?? null
     );
-  }, [activeAccount?.skin_sha256, savedSkins]);
+  }, [activeAccount?.skin_sha256, allSkins]);
 
   const activeCapeUrl = useMemo(() => {
     if (!activeAccount) return null;
-    if (activeAccount.custom_cape_sha256) {
+    if (!isMicrosoft && activeAccount.custom_cape_sha256) {
       return (
         savedCapes.find((c) => c.sha256 === activeAccount.custom_cape_sha256)
           ?.preview_data_url ?? null
@@ -64,7 +76,32 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
       );
     }
     return null;
-  }, [activeAccount, savedCapes]);
+  }, [activeAccount, isMicrosoft, savedCapes]);
+
+  const refreshLatestStateAfterSyncError = async (err: unknown) => {
+    onToast(String(err));
+    try {
+      const latest = await LauncherBridge.getState();
+      onStateChange(latest);
+    } catch {
+      // ignore fallback read failure
+    }
+  };
+
+  const handleToggleCollapse = () => {
+    if (!leftCollapsed) {
+      if (
+        typeof document !== "undefined" &&
+        leftPanelRef.current?.contains(document.activeElement)
+      ) {
+        collapseBtnRef.current?.focus();
+      }
+      setLeftCollapsed(true);
+    } else {
+      setRenderLeftContent(true);
+      setLeftCollapsed(false);
+    }
+  };
 
   const handleUploadPng = (
     e: React.ChangeEvent<HTMLInputElement>,
@@ -72,6 +109,10 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
   ) => {
     const file = e.target.files?.[0];
     if (!file || !activeAccount) return;
+    if (kind === "cape" && isMicrosoft) {
+      e.target.value = "";
+      return;
+    }
     const reader = new FileReader();
     reader.onload = async () => {
       try {
@@ -87,46 +128,85 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         onStateChange(next);
         onToast(`Added ${cleanName}`);
       } catch (err) {
-        onToast(String(err));
+        await refreshLatestStateAfterSyncError(err);
       }
     };
     reader.readAsDataURL(file);
     e.target.value = "";
   };
 
+  const handleEquipDefaultSteve = async () => {
+    if (!activeAccount) return;
+    setSkinVariant("classic");
+    try {
+      if (isMicrosoft) {
+        const next = await LauncherBridge.importAndEquipWardrobePng(
+          activeAccount.id,
+          "Steve",
+          steveDataUrl,
+          "skin",
+          "classic"
+        );
+        onStateChange(next);
+      } else {
+        const next = await LauncherBridge.equipExistingWardrobeItem(
+          activeAccount.id,
+          "",
+          "skin",
+          "classic"
+        );
+        onStateChange(next);
+      }
+    } catch (err) {
+      await refreshLatestStateAfterSyncError(err);
+    }
+  };
+
   const handleEquipSkin = async (sha256: string, variant: SkinVariant) => {
     if (!activeAccount) return;
     setSkinVariant(variant);
-    const next = await LauncherBridge.equipExistingWardrobeItem(
-      activeAccount.id,
-      sha256,
-      "skin",
-      variant
-    );
-    onStateChange(next);
+    try {
+      const next = await LauncherBridge.equipExistingWardrobeItem(
+        activeAccount.id,
+        sha256,
+        "skin",
+        variant
+      );
+      onStateChange(next);
+    } catch (err) {
+      await refreshLatestStateAfterSyncError(err);
+    }
   };
 
   const handleSwitchVariant = async (nextVariant: SkinVariant) => {
     setSkinVariant(nextVariant);
     if (!activeAccount) return;
-    const next = await LauncherBridge.equipExistingWardrobeItem(
-      activeAccount.id,
-      activeAccount.skin_sha256 ?? "",
-      "skin",
-      nextVariant
-    );
-    onStateChange(next);
+    try {
+      const next = await LauncherBridge.equipExistingWardrobeItem(
+        activeAccount.id,
+        activeAccount.skin_sha256 ?? "",
+        "skin",
+        nextVariant
+      );
+      onStateChange(next);
+    } catch (err) {
+      await refreshLatestStateAfterSyncError(err);
+    }
   };
 
   const handleEquipCape = async (sha256: string) => {
-    if (!activeAccount) return;
-    const next = await LauncherBridge.equipExistingWardrobeItem(
-      activeAccount.id,
-      sha256,
-      "cape",
-      skinVariant
-    );
-    onStateChange(next);
+    if (!activeAccount || isMicrosoft) return;
+    try {
+      const next = await LauncherBridge.equipExistingWardrobeItem(
+        activeAccount.id,
+        sha256,
+        "cape",
+        skinVariant
+      );
+      onStateChange(next);
+    } catch (err) {
+      await refreshLatestStateAfterSyncError(err);
+    }
   };
 
   const handleRemoveAsset = async (
@@ -135,9 +215,16 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
     kind: WardrobeAssetKind
   ) => {
     e.stopPropagation();
-    const next = await LauncherBridge.removeWardrobeItem(sha256, kind);
-    onStateChange(next);
+    try {
+      const next = await LauncherBridge.removeWardrobeItem(sha256, kind);
+      onStateChange(next);
+    } catch (err) {
+      onToast(String(err));
+    }
   };
+
+  const steveSelected =
+    !activeAccount?.skin_sha256 || activeSkinUrl === steveDataUrl;
 
   return (
     <div className="relative h-full w-full flex overflow-hidden">
@@ -148,279 +235,309 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         className="hidden"
         onChange={(e) => handleUploadPng(e, "skin")}
       />
-      <input
-        ref={capeInputRef}
-        type="file"
-        accept="image/png"
-        className="hidden"
-        onChange={(e) => handleUploadPng(e, "cape")}
-      />
+      {!isMicrosoft && (
+        <input
+          ref={capeInputRef}
+          type="file"
+          accept="image/png"
+          className="hidden"
+          onChange={(e) => handleUploadPng(e, "cape")}
+        />
+      )}
 
       {/* LEFT 50% (Collapsible): Vertical 50/50 Split -> Top Skins / Bottom Capes */}
       <motion.div
+        ref={leftPanelRef}
+        aria-hidden={leftCollapsed}
         initial={false}
         animate={{
           width: leftCollapsed ? "0%" : "50%",
           opacity: leftCollapsed ? 0 : 1,
         }}
         transition={ELASTIC_SPRING}
+        onAnimationComplete={() => {
+          if (leftCollapsed) {
+            setRenderLeftContent(false);
+          }
+        }}
         className={`h-full flex flex-col overflow-hidden bg-surface/50 ${
           leftCollapsed ? "border-r-0 pointer-events-none" : "border-r border-border"
         }`}
       >
-        {/* TOP 50%: SKINS */}
-        <section className="h-1/2 min-h-0 flex flex-col border-b border-border">
-          <div className="h-11 shrink-0 px-4 border-b border-border flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold tracking-tight">Skins</span>
+        {renderLeftContent && !leftCollapsed && (
+          <>
+            {/* TOP 50%: SKINS */}
+            <section className="h-1/2 min-h-0 flex flex-col border-b border-border">
+              <div className="h-11 shrink-0 px-4 border-b border-border flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold tracking-tight">Skins</span>
 
-            <div className="flex items-center gap-1.5">
-              <div className="inline-flex p-0.5 rounded-lg bg-elevated border border-border">
-                {(["classic", "slim"] as const).map((v) => (
+                <div className="flex items-center gap-1.5">
+                  <div className="inline-flex p-0.5 rounded-lg bg-elevated border border-border">
+                    {(["classic", "slim"] as const).map((v) => (
+                      <button
+                        key={v}
+                        type="button"
+                        onClick={() => void handleSwitchVariant(v)}
+                        className={`px-2 py-1 rounded-md text-[11px] font-medium capitalize transition-colors ${
+                          skinVariant === v ? "bg-fg text-bg" : "text-muted hover:text-fg"
+                        }`}
+                      >
+                        {v}
+                      </button>
+                    ))}
+                  </div>
+
                   <button
-                    key={v}
                     type="button"
-                    onClick={() => void handleSwitchVariant(v)}
-                    className={`px-2 py-1 rounded-md text-[11px] font-medium capitalize transition-colors ${
-                      skinVariant === v ? "bg-fg text-bg" : "text-muted hover:text-fg"
-                    }`}
+                    onClick={() => skinInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-fg text-bg text-[11px] font-semibold"
                   >
-                    {v}
+                    <Plus className="w-3.5 h-3.5" /> Add
                   </button>
-                ))}
+                </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => skinInputRef.current?.click()}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-fg text-bg text-[11px] font-semibold"
-              >
-                <Plus className="w-3.5 h-3.5" /> Add
-              </button>
-            </div>
-          </div>
-
-          <div className="flex-1 min-h-0 overflow-y-auto p-3">
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
-              {/* Default Steve Card */}
-              <button
-                type="button"
-                onClick={() => void handleEquipSkin("", "classic")}
-                className={`p-2.5 rounded-xl border text-left transition-colors flex flex-col items-center gap-2 ${
-                  !activeAccount?.skin_sha256
-                    ? "border-fg bg-elevated"
-                    : "border-border bg-surface hover:border-fg/40"
-                }`}
-              >
-                <div className="w-12 h-12 rounded-lg overflow-hidden bg-elevated border border-border flex items-center justify-center">
-                  <img
-                    src={steveDataUrl}
-                    alt="Steve"
-                    className="w-12 h-12 object-none"
-                    style={{
-                      imageRendering: "pixelated",
-                      objectPosition: "-8px -8px",
-                      transform: "scale(6)",
-                      transformOrigin: "8px 8px",
-                    }}
-                  />
-                </div>
-                <span className="text-[11px] font-medium truncate w-full text-center">
-                  Steve
-                </span>
-              </button>
-
-              {/* Saved Skins */}
-              {savedSkins.map((skin) => {
-                const selected = activeAccount?.skin_sha256 === skin.sha256;
-                return (
-                  <div
-                    key={skin.sha256}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => void handleEquipSkin(skin.sha256, skin.variant)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        void handleEquipSkin(skin.sha256, skin.variant);
-                      }
-                    }}
-                    className={`group relative cursor-pointer p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${
-                      selected
+              <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+                  {/* Default Steve Card */}
+                  <button
+                    type="button"
+                    onClick={() => void handleEquipDefaultSteve()}
+                    className={`p-2.5 rounded-xl border text-left transition-colors flex flex-col items-center gap-2 ${
+                      steveSelected
                         ? "border-fg bg-elevated"
                         : "border-border bg-surface hover:border-fg/40"
                     }`}
                   >
-                    <button
-                      type="button"
-                      aria-label={`Remove ${skin.name}`}
-                      onClick={(e) => void handleRemoveAsset(e, skin.sha256, "skin")}
-                      className="opacity-0 group-hover:opacity-100 absolute top-1.5 right-1.5 p-1 rounded-md bg-bg/85 border border-border text-muted hover:text-fg transition-opacity"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
-
                     <div className="w-12 h-12 rounded-lg overflow-hidden bg-elevated border border-border flex items-center justify-center">
                       <img
-                        src={skin.preview_data_url}
-                        alt={skin.name}
-                        className="w-12 h-12 object-contain"
-                        style={{ imageRendering: "pixelated" }}
+                        src={steveDataUrl}
+                        alt="Steve"
+                        className="w-12 h-12 object-none"
+                        style={{
+                          imageRendering: "pixelated",
+                          objectPosition: "-8px -8px",
+                          transform: "scale(6)",
+                          transformOrigin: "8px 8px",
+                        }}
                       />
                     </div>
                     <span className="text-[11px] font-medium truncate w-full text-center">
-                      {skin.name}
+                      Steve
                     </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
+                  </button>
 
-        {/* BOTTOM 50%: CAPES */}
-        <section className="h-1/2 min-h-0 flex flex-col">
-          <div className="h-11 shrink-0 px-4 border-b border-border flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold tracking-tight">Capes</span>
+                  {/* Saved Skins */}
+                  {savedSkins.map((skin) => {
+                    const selected = activeAccount?.skin_sha256 === skin.sha256;
+                    return (
+                      <div
+                        key={skin.sha256}
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => void handleEquipSkin(skin.sha256, skin.variant)}
+                        onKeyDown={(e) => {
+                          if (e.target !== e.currentTarget) return;
+                          if (e.key === "Enter" || e.key === " ") {
+                            e.preventDefault();
+                            void handleEquipSkin(skin.sha256, skin.variant);
+                          }
+                        }}
+                        className={`group relative cursor-pointer p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${
+                          selected
+                            ? "border-fg bg-elevated"
+                            : "border-border bg-surface hover:border-fg/40"
+                        }`}
+                      >
+                        <button
+                          type="button"
+                          aria-label={`Remove ${skin.name}`}
+                          onClick={(e) => void handleRemoveAsset(e, skin.sha256, "skin")}
+                          className="opacity-0 group-hover:opacity-100 focus:opacity-100 absolute top-1.5 right-1.5 p-1 rounded-md bg-bg/85 border border-border text-muted hover:text-fg transition-opacity"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
 
-            <button
-              type="button"
-              onClick={() => capeInputRef.current?.click()}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-fg text-bg text-[11px] font-semibold"
-            >
-              <Plus className="w-3.5 h-3.5" /> Add
-            </button>
-          </div>
-
-          <div className="flex-1 min-h-0 overflow-y-auto p-3">
-            <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
-              {/* No Cape Option */}
-              <button
-                type="button"
-                onClick={async () => {
-                  if (!activeAccount) return;
-                  let next = await LauncherBridge.equipExistingWardrobeItem(
-                    activeAccount.id,
-                    "",
-                    "cape",
-                    skinVariant
-                  );
-                  if (activeAccount.account_type === "microsoft" && activeAccount.official_cape_id) {
-                    next = await LauncherBridge.selectOfficialCape(activeAccount.id, null);
-                  }
-                  onStateChange(next);
-                }}
-                className={`p-2.5 rounded-xl border transition-colors flex flex-col items-center justify-center gap-2 min-h-[84px] ${
-                  !activeAccount?.custom_cape_sha256 && !activeAccount?.official_cape_id
-                    ? "border-fg bg-elevated"
-                    : "border-border bg-surface hover:border-fg/40"
-                }`}
-              >
-                <span className="text-[11px] font-medium">None</span>
-              </button>
-
-              {/* Official Mojang Capes (when Microsoft account is active) */}
-              {activeAccount?.account_type === "microsoft" &&
-                activeAccount.official_capes.map((cape) => {
-                  const selected =
-                    !activeAccount.custom_cape_sha256 &&
-                    activeAccount.official_cape_id === cape.id;
-                  return (
-                    <button
-                      key={cape.id}
-                      type="button"
-                      onClick={async () => {
-                        await LauncherBridge.equipExistingWardrobeItem(
-                          activeAccount.id,
-                          "",
-                          "cape",
-                          skinVariant
-                        );
-                        const next = await LauncherBridge.selectOfficialCape(
-                          activeAccount.id,
-                          cape.id
-                        );
-                        onStateChange(next);
-                      }}
-                      className={`p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${
-                        selected
-                          ? "border-fg bg-elevated"
-                          : "border-border bg-surface hover:border-fg/40"
-                      }`}
-                    >
-                      <div className="w-12 h-12 rounded-lg overflow-hidden bg-elevated border border-border flex items-center justify-center">
-                        {cape.url ? (
+                        <div className="w-12 h-12 rounded-lg overflow-hidden bg-elevated border border-border flex items-center justify-center">
                           <img
-                            src={cape.url}
-                            alt={cape.alias}
+                            src={skin.preview_data_url}
+                            alt={skin.name}
                             className="w-12 h-12 object-contain"
                             style={{ imageRendering: "pixelated" }}
                           />
-                        ) : (
-                          <span className="text-[10px] font-mono text-muted">CAPE</span>
-                        )}
+                        </div>
+                        <span className="text-[11px] font-medium truncate w-full text-center">
+                          {skin.name}
+                        </span>
                       </div>
-                      <span className="text-[11px] font-medium truncate w-full text-center">
-                        {cape.alias}
-                      </span>
-                    </button>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              </div>
+            </section>
 
-              {/* Saved Custom Capes */}
-              {savedCapes.map((cape) => {
-                const selected = activeAccount?.custom_cape_sha256 === cape.sha256;
-                return (
-                  <div
-                    key={cape.sha256}
-                    role="button"
-                    tabIndex={0}
-                    onClick={() => void handleEquipCape(cape.sha256)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" || e.key === " ") {
-                        e.preventDefault();
-                        void handleEquipCape(cape.sha256);
+            {/* BOTTOM 50%: CAPES */}
+            <section className="h-1/2 min-h-0 flex flex-col">
+              <div className="h-11 shrink-0 px-4 border-b border-border flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold tracking-tight">Capes</span>
+
+                {!isMicrosoft && (
+                  <button
+                    type="button"
+                    onClick={() => capeInputRef.current?.click()}
+                    className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-fg text-bg text-[11px] font-semibold"
+                  >
+                    <Plus className="w-3.5 h-3.5" /> Add
+                  </button>
+                )}
+              </div>
+
+              <div className="flex-1 min-h-0 overflow-y-auto p-3">
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+                  {/* No Cape Option */}
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!activeAccount) return;
+                      try {
+                        let next = activeAccount.custom_cape_sha256
+                          ? await LauncherBridge.equipExistingWardrobeItem(
+                              activeAccount.id,
+                              "",
+                              "cape",
+                              skinVariant
+                            )
+                          : state;
+                        if (isMicrosoft && activeAccount.official_cape_id) {
+                          next = await LauncherBridge.selectOfficialCape(
+                            activeAccount.id,
+                            null
+                          );
+                        }
+                        onStateChange(next);
+                      } catch (err) {
+                        await refreshLatestStateAfterSyncError(err);
                       }
                     }}
-                    className={`group relative cursor-pointer p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${
-                      selected
+                    className={`p-2.5 rounded-xl border transition-colors flex flex-col items-center justify-center gap-2 min-h-[84px] ${
+                      (isMicrosoft || !activeAccount?.custom_cape_sha256) &&
+                      !activeAccount?.official_cape_id
                         ? "border-fg bg-elevated"
                         : "border-border bg-surface hover:border-fg/40"
                     }`}
                   >
-                    <button
-                      type="button"
-                      aria-label={`Remove ${cape.name}`}
-                      onClick={(e) => void handleRemoveAsset(e, cape.sha256, "cape")}
-                      className="opacity-0 group-hover:opacity-100 absolute top-1.5 right-1.5 p-1 rounded-md bg-bg/85 border border-border text-muted hover:text-fg transition-opacity"
-                    >
-                      <Trash2 className="w-3 h-3" />
-                    </button>
+                    <span className="text-[11px] font-medium">None</span>
+                  </button>
 
-                    <div className="w-12 h-12 rounded-lg overflow-hidden bg-elevated border border-border flex items-center justify-center">
-                      <img
-                        src={cape.preview_data_url}
-                        alt={cape.name}
-                        className="w-12 h-12 object-contain"
-                        style={{ imageRendering: "pixelated" }}
-                      />
-                    </div>
-                    <span className="text-[11px] font-medium truncate w-full text-center">
-                      {cape.name}
-                    </span>
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        </section>
+                  {/* Official Mojang Capes (when Microsoft account is active) */}
+                  {isMicrosoft &&
+                    activeAccount.official_capes.map((cape) => {
+                      const selected = activeAccount.official_cape_id === cape.id;
+                      return (
+                        <button
+                          key={cape.id}
+                          type="button"
+                          onClick={async () => {
+                            try {
+                              const next = await LauncherBridge.selectOfficialCape(
+                                activeAccount.id,
+                                cape.id
+                              );
+                              onStateChange(next);
+                            } catch (err) {
+                              await refreshLatestStateAfterSyncError(err);
+                            }
+                          }}
+                          className={`p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${
+                            selected
+                              ? "border-fg bg-elevated"
+                              : "border-border bg-surface hover:border-fg/40"
+                          }`}
+                        >
+                          <div className="w-12 h-12 rounded-lg overflow-hidden bg-elevated border border-border flex items-center justify-center">
+                            {cape.url ? (
+                              <img
+                                src={cape.url}
+                                alt={cape.alias}
+                                className="w-12 h-12 object-contain"
+                                style={{ imageRendering: "pixelated" }}
+                              />
+                            ) : (
+                              <span className="text-[10px] font-mono text-muted">
+                                CAPE
+                              </span>
+                            )}
+                          </div>
+                          <span className="text-[11px] font-medium truncate w-full text-center">
+                            {cape.alias}
+                          </span>
+                        </button>
+                      );
+                    })}
+
+                  {/* Saved Custom Capes (Offline accounts only) */}
+                  {!isMicrosoft &&
+                    savedCapes.map((cape) => {
+                      const selected =
+                        activeAccount?.custom_cape_sha256 === cape.sha256;
+                      return (
+                        <div
+                          key={cape.sha256}
+                          role="button"
+                          tabIndex={0}
+                          onClick={() => void handleEquipCape(cape.sha256)}
+                          onKeyDown={(e) => {
+                            if (e.target !== e.currentTarget) return;
+                            if (e.key === "Enter" || e.key === " ") {
+                              e.preventDefault();
+                              void handleEquipCape(cape.sha256);
+                            }
+                          }}
+                          className={`group relative cursor-pointer p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${
+                            selected
+                              ? "border-fg bg-elevated"
+                              : "border-border bg-surface hover:border-fg/40"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            aria-label={`Remove ${cape.name}`}
+                            onClick={(e) =>
+                              void handleRemoveAsset(e, cape.sha256, "cape")
+                            }
+                            className="opacity-0 group-hover:opacity-100 focus:opacity-100 absolute top-1.5 right-1.5 p-1 rounded-md bg-bg/85 border border-border text-muted hover:text-fg transition-opacity"
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+
+                          <div className="w-12 h-12 rounded-lg overflow-hidden bg-elevated border border-border flex items-center justify-center">
+                            <img
+                              src={cape.preview_data_url}
+                              alt={cape.name}
+                              className="w-12 h-12 object-contain"
+                              style={{ imageRendering: "pixelated" }}
+                            />
+                          </div>
+                          <span className="text-[11px] font-medium truncate w-full text-center">
+                            {cape.name}
+                          </span>
+                        </div>
+                      );
+                    })}
+                </div>
+              </div>
+            </section>
+          </>
+        )}
       </motion.div>
 
       {/* SIDE COLLAPSE / EXPAND BUTTON + RIGHT 50% (Expands to 100% when Left is collapsed): 3D ROTATABLE CHARACTER */}
       <div className="relative flex-1 h-full min-w-0 bg-bg">
         <button
+          ref={collapseBtnRef}
           type="button"
           aria-label={leftCollapsed ? "Expand skins and capes" : "Collapse skins and capes"}
-          onClick={() => setLeftCollapsed((v) => !v)}
+          onClick={handleToggleCollapse}
           className="absolute left-2 top-1/2 -translate-y-1/2 z-20 w-7 h-14 rounded-xl bg-surface border border-border flex items-center justify-center text-muted hover:text-fg shadow-md transition-colors"
         >
           {leftCollapsed ? (
@@ -441,4 +558,3 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
 };
 
 export default WardrobeView;
-

@@ -229,7 +229,14 @@ async fn import_and_equip_wardrobe_png(
     };
 
     if let Some(tok) = premium_token {
-        let _ = twilight_core::auth::upload_skin_to_mojang_premium(&ctx.http, &tok, png_bytes, variant).await;
+        if let Err(err) =
+            twilight_core::auth::upload_skin_to_mojang_premium(&ctx.http, &tok, png_bytes, variant)
+                .await
+        {
+            return Err(format!(
+                "Skin saved locally, but Mojang sync failed (select skin again to retry): {err}"
+            ));
+        }
     }
 
     let guard = ctx.state.lock().map_err(|e| e.to_string())?;
@@ -283,12 +290,18 @@ async fn equip_existing_wardrobe_item(
     };
 
     if let Some((tok, skin_path)) = premium_upload {
-        if let Ok(png_bytes) = std::fs::read(skin_path) {
-            let _ = twilight_core::auth::upload_skin_to_mojang_premium(
-                &ctx.http, &tok, png_bytes, variant,
+        let png_bytes = std::fs::read(&skin_path).map_err(|err| {
+            format!(
+                "Skin selected locally, but reading local PNG for Mojang sync failed (select again to retry): {err}"
             )
-            .await;
-        }
+        })?;
+        twilight_core::auth::upload_skin_to_mojang_premium(&ctx.http, &tok, png_bytes, variant)
+            .await
+            .map_err(|err| {
+                format!(
+                    "Skin selected locally, but Mojang sync failed (select again to retry): {err}"
+                )
+            })?;
     }
 
     let guard = ctx.state.lock().map_err(|e| e.to_string())?;
@@ -304,33 +317,40 @@ fn remove_wardrobe_item(
     if sha256.is_empty() || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Invalid wardrobe asset hash".to_string());
     }
-    let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
-    guard
-        .wardrobe
-        .retain(|w| !(w.sha256 == sha256 && w.kind == kind));
-    for acct in &mut guard.accounts {
-        match kind {
-            WardrobeAssetKind::Skin => {
-                if acct.skin_sha256.as_deref() == Some(sha256.as_str()) {
-                    acct.skin_sha256 = None;
-                }
-            }
-            WardrobeAssetKind::Cape => {
-                if acct.custom_cape_sha256.as_deref() == Some(sha256.as_str()) {
-                    acct.custom_cape_sha256 = None;
-                }
-            }
-        }
-    }
     let asset_path = match kind {
         WardrobeAssetKind::Skin => ctx.paths.wardrobe_skins_dir().join(format!("{sha256}.png")),
         WardrobeAssetKind::Cape => ctx.paths.wardrobe_capes_dir().join(format!("{sha256}.png")),
     };
+
+    let committed = {
+        let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
+        let mut staged = guard.clone();
+        staged
+            .wardrobe
+            .retain(|w| !(w.sha256 == sha256 && w.kind == kind));
+        for acct in &mut staged.accounts {
+            match kind {
+                WardrobeAssetKind::Skin => {
+                    if acct.skin_sha256.as_deref() == Some(sha256.as_str()) {
+                        acct.skin_sha256 = None;
+                    }
+                }
+                WardrobeAssetKind::Cape => {
+                    if acct.custom_cape_sha256.as_deref() == Some(sha256.as_str()) {
+                        acct.custom_cape_sha256 = None;
+                    }
+                }
+            }
+        }
+        twilight_core::save_state(&ctx.paths, &staged).map_err(|e| e.to_string())?;
+        *guard = staged.clone();
+        staged
+    };
+
     if asset_path.exists() {
         let _ = std::fs::remove_file(asset_path);
     }
-    twilight_core::save_state(&ctx.paths, &guard).map_err(|e| e.to_string())?;
-    Ok(guard.clone())
+    Ok(committed)
 }
 
 #[tauri::command]

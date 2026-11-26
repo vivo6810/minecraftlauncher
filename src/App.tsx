@@ -215,6 +215,7 @@ export const App: React.FC = () => {
 
               {screen === "profile" && selectedProfile && (
                 <ProfileWorkspace
+                  key={selectedProfile.id}
                   profile={selectedProfile}
                   allProfiles={state.profiles}
                   initialTab={profileInitialTab}

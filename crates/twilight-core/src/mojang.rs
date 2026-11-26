@@ -226,38 +226,59 @@ async fn download_single_verified(client: &reqwest::Client, task: &DownloadTask)
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let tmp_path = PathBuf::from(format!("{}.part", task.destination.display()));
-    let resp = client
-        .get(&task.url)
-        .send()
-        .await
-        .with_context(|| format!("Failed GET {}", task.url))?
-        .error_for_status()?;
-
-    let mut stream = resp.bytes_stream();
-    let mut file = tokio::fs::File::create(&tmp_path).await?;
-    let mut hasher = Sha1::new();
-
-    while let Some(chunk) = stream.next().await {
-        let data = chunk?;
-        hasher.update(&data);
-        file.write_all(&data).await?;
+    let mut tmp_name = std::ffi::OsString::from(".");
+    if let Some(fname) = task.destination.file_name() {
+        tmp_name.push(fname);
+    } else {
+        tmp_name.push("artifact");
     }
-    file.flush().await?;
-    drop(file);
+    tmp_name.push(format!(".{}.part", uuid::Uuid::new_v4().simple()));
+    let tmp_path = match task.destination.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p.join(tmp_name),
+        _ => PathBuf::from(tmp_name),
+    };
 
-    if let Some(expected) = &task.expected_sha1 {
-        let digest = hex::encode(hasher.finalize());
-        anyhow::ensure!(
-            digest.eq_ignore_ascii_case(expected),
-            "SHA-1 mismatch for {}: expected {}, got {}",
-            task.label,
-            expected,
-            digest
-        );
+    let write_and_verify = async {
+        let resp = client
+            .get(&task.url)
+            .send()
+            .await
+            .with_context(|| format!("Failed GET {}", task.url))?
+            .error_for_status()?;
+
+        let mut stream = resp.bytes_stream();
+        let mut file = tokio::fs::File::create(&tmp_path).await?;
+        let mut hasher = Sha1::new();
+
+        while let Some(chunk) = stream.next().await {
+            let data = chunk?;
+            hasher.update(&data);
+            file.write_all(&data).await?;
+        }
+        file.flush().await?;
+        drop(file);
+
+        if let Some(expected) = &task.expected_sha1 {
+            let digest = hex::encode(hasher.finalize());
+            anyhow::ensure!(
+                digest.eq_ignore_ascii_case(expected),
+                "SHA-1 mismatch for {}: expected {}, got {}",
+                task.label,
+                expected,
+                digest
+            );
+        }
+
+        tokio::fs::rename(&tmp_path, &task.destination).await?;
+        Ok::<(), anyhow::Error>(())
+    }
+    .await;
+
+    if let Err(err) = write_and_verify {
+        let _ = tokio::fs::remove_file(&tmp_path).await;
+        return Err(err);
     }
 
-    tokio::fs::rename(&tmp_path, &task.destination).await?;
     Ok(())
 }
 

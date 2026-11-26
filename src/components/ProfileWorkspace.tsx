@@ -73,6 +73,7 @@ export const ProfileWorkspace: React.FC<Props> = ({
   onToast,
 }) => {
   const [tab, setTab] = useState(initialTab);
+  const [nameDraft, setNameDraft] = useState(profile.name);
   const [showSnapshots, setShowSnapshots] = useState(false);
   const [loaderOptions, setLoaderOptions] = useState<LoaderVersionOption[]>([]);
 
@@ -92,6 +93,10 @@ export const ProfileWorkspace: React.FC<Props> = ({
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab, profile.id]);
+
+  useEffect(() => {
+    setNameDraft(profile.name);
+  }, [profile.id, profile.name]);
 
   useEffect(() => {
     let active = true;
@@ -169,7 +174,18 @@ export const ProfileWorkspace: React.FC<Props> = ({
       }
       onToast(`Copied ${shot.file_name}`);
     } catch {
-      onToast(`Copied ${shot.file_name}`);
+      onToast(`Failed to copy ${shot.file_name}`);
+    }
+  };
+
+  const commitNameDraft = () => {
+    const trimmed = nameDraft.trim();
+    if (!trimmed) {
+      setNameDraft(profile.name);
+      return;
+    }
+    if (trimmed !== profile.name) {
+      void onSaveProfile({ ...profile, name: trimmed });
     }
   };
 
@@ -277,8 +293,14 @@ export const ProfileWorkspace: React.FC<Props> = ({
           <div className="px-4 py-3 flex items-center justify-between gap-3">
             <span className="text-xs font-medium">Name</span>
             <input
-              value={profile.name}
-              onChange={(e) => void onSaveProfile({ ...profile, name: e.target.value })}
+              value={nameDraft}
+              onChange={(e) => setNameDraft(e.target.value)}
+              onBlur={commitNameDraft}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.currentTarget.blur();
+                }
+              }}
               className="w-56 px-3 py-1.5 rounded-lg bg-elevated border border-border text-xs text-fg focus:outline-none focus:border-fg"
             />
           </div>

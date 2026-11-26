@@ -563,7 +563,10 @@ export const ModrinthBrowser: React.FC<Props> = ({
                       type="button"
                       whileHover={{ scale: 1.03 }}
                       whileTap={{ scale: 0.94 }}
-                      disabled={kind !== "modpack" && !selectedProfileId}
+                      disabled={
+                        Boolean(installingId) ||
+                        (kind !== "modpack" && !selectedProfileId)
+                      }
                       onClick={() => void handleConfirmModal()}
                       className="px-4 py-2 rounded-xl text-xs font-semibold bg-fg text-bg disabled:opacity-45"
                     >

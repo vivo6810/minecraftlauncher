@@ -35,11 +35,10 @@ export const TitleBar: React.FC = () => {
 
   return (
     <header
-      data-tauri-drag-region
       onMouseDown={handleDragMouseDown}
       className="h-9 shrink-0 w-full bg-surface border-b border-border flex items-center justify-between pl-3.5 pr-1 select-none z-40"
     >
-      <div data-tauri-drag-region className="flex items-center gap-2 pointer-events-none">
+      <div className="flex items-center gap-2 pointer-events-none">
         <div className="w-4 h-4 rounded bg-fg text-bg flex items-center justify-center font-mono font-black text-[9px]">
           TL
         </div>

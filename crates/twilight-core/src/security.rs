@@ -235,10 +235,10 @@ pub fn wrap_linux_bwrap_command(
         bwrap_args.push("/tmp/.X11-unix".to_string());
     }
 
-    // Bind XDG_RUNTIME_DIR so Wayland, PipeWire, PulseAudio & KWin XWayland sockets work inside bwrap
+    // Read-only bind XDG_RUNTIME_DIR so Wayland/PipeWire/PulseAudio client sockets work without exposing host runtime dir to writes
     if let Ok(xdg_rt) = std::env::var("XDG_RUNTIME_DIR") {
         if !xdg_rt.is_empty() && Path::new(&xdg_rt).exists() {
-            bwrap_args.push("--bind".to_string());
+            bwrap_args.push("--ro-bind".to_string());
             bwrap_args.push(xdg_rt.clone());
             bwrap_args.push(xdg_rt);
         }
