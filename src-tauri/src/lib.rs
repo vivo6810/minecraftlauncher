@@ -198,7 +198,7 @@ async fn import_and_equip_wardrobe_png(
         .decode(clean_b64)
         .map_err(|e| format!("Invalid base64 PNG: {e}"))?;
 
-    let (committed_snapshot, sync_seq) = {
+    let sync_seq = {
         let _fs_guard = ctx.wardrobe_fs_lock.lock().await;
 
         let item: WardrobeItem = twilight_core::auth::import_png_to_wardrobe(
@@ -235,23 +235,23 @@ async fn import_and_equip_wardrobe_png(
             }
         }
         twilight_core::save_state(&ctx.paths, &staged).map_err(|e| e.to_string())?;
-        *guard = staged.clone();
-        let next_seq = if needs_sync {
+        *guard = staged;
+        if needs_sync {
             let mut seq_map = ctx.skin_sync_seq.lock().map_err(|e| e.to_string())?;
             let entry = seq_map.entry(account_id.clone()).or_insert(0);
             *entry += 1;
             Some(*entry)
         } else {
             None
-        };
-        (staged, next_seq)
+        }
     };
 
     if let Some(my_seq) = sync_seq {
         sync_latest_premium_skin(&ctx, &account_id, my_seq).await?;
     }
 
-    Ok(committed_snapshot)
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    Ok(guard.clone())
 }
 
 async fn sync_latest_premium_skin(
@@ -319,7 +319,7 @@ async fn equip_existing_wardrobe_item(
     if !sha256.is_empty() && !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Invalid wardrobe asset hash".to_string());
     }
-    let (committed_snapshot, sync_seq) = {
+    let sync_seq = {
         let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
         let mut staged = guard.clone();
         let mut needs_sync = false;
@@ -348,23 +348,23 @@ async fn equip_existing_wardrobe_item(
             }
         }
         twilight_core::save_state(&ctx.paths, &staged).map_err(|e| e.to_string())?;
-        *guard = staged.clone();
-        let next_seq = if needs_sync {
+        *guard = staged;
+        if needs_sync {
             let mut seq_map = ctx.skin_sync_seq.lock().map_err(|e| e.to_string())?;
             let entry = seq_map.entry(account_id.clone()).or_insert(0);
             *entry += 1;
             Some(*entry)
         } else {
             None
-        };
-        (staged, next_seq)
+        }
     };
 
     if let Some(my_seq) = sync_seq {
         sync_latest_premium_skin(&ctx, &account_id, my_seq).await?;
     }
 
-    Ok(committed_snapshot)
+    let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+    Ok(guard.clone())
 }
 
 #[tauri::command]

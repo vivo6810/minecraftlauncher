@@ -21,6 +21,9 @@ import {
 interface Props {
   profiles: Profile[];
   mcVersions: MinecraftVersionEntry[];
+  versionsError?: string | null;
+  loadingVersions?: boolean;
+  onRetryVersions?: () => void;
   onLaunchProfile: (profile: Profile) => void;
   onSelectProfile: (profile: Profile, initialTab?: string) => void;
   onOpenUniversalModrinth: () => void;
@@ -38,6 +41,9 @@ const LOADERS: { id: ModLoaderKind; label: string }[] = [
 export const StartScreen: React.FC<Props> = ({
   profiles,
   mcVersions,
+  versionsError,
+  loadingVersions,
+  onRetryVersions,
   onLaunchProfile,
   onSelectProfile,
   onOpenUniversalModrinth,
@@ -271,11 +277,30 @@ export const StartScreen: React.FC<Props> = ({
                     </div>
 
                     <div className="space-y-1">
-                      <label className="text-xs text-muted">Version</label>
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="text-xs text-muted">Version</label>
+                        {(versionsError || releaseVersions.length === 0) &&
+                          onRetryVersions && (
+                            <button
+                              type="button"
+                              disabled={Boolean(loadingVersions)}
+                              onClick={onRetryVersions}
+                              className="text-[11px] font-medium text-fg underline disabled:opacity-50"
+                            >
+                              {loadingVersions ? "Loading..." : "Retry"}
+                            </button>
+                          )}
+                      </div>
+                      {versionsError && (
+                        <div className="text-[11px] text-muted truncate">
+                          Failed to load versions
+                        </div>
+                      )}
                       <select
                         value={newVersion}
+                        disabled={releaseVersions.length === 0}
                         onChange={(e) => setNewVersion(e.target.value)}
-                        className="w-full px-3.5 py-2 rounded-xl bg-elevated border border-border text-xs font-mono text-fg focus:outline-none"
+                        className="w-full px-3.5 py-2 rounded-xl bg-elevated border border-border text-xs font-mono text-fg focus:outline-none disabled:opacity-50"
                       >
                         {releaseVersions.map((v) => (
                           <option key={v.id} value={v.id}>

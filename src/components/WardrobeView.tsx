@@ -24,6 +24,7 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
   const collapseBtnRef = useRef<HTMLButtonElement | null>(null);
   const skinInputRef = useRef<HTMLInputElement | null>(null);
   const capeInputRef = useRef<HTMLInputElement | null>(null);
+  const wardrobeReqSeqRef = useRef(0);
 
   const activeAccount =
     state.accounts.find((a) => a.active) ?? state.accounts[0];
@@ -78,11 +79,17 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
     return null;
   }, [activeAccount, isMicrosoft, savedCapes]);
 
-  const refreshLatestStateAfterSyncError = async (err: unknown) => {
+  const applyIfCurrent = (reqId: number, next: LauncherStateSnapshot) => {
+    if (wardrobeReqSeqRef.current === reqId) {
+      onStateChange(next);
+    }
+  };
+
+  const refreshLatestStateAfterSyncError = async (reqId: number, err: unknown) => {
     onToast(String(err));
     try {
       const latest = await LauncherBridge.getState();
-      onStateChange(latest);
+      applyIfCurrent(reqId, latest);
     } catch {
       // ignore fallback read failure
     }
@@ -115,6 +122,7 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
     }
     const reader = new FileReader();
     reader.onload = async () => {
+      const reqId = ++wardrobeReqSeqRef.current;
       try {
         const b64 = String(reader.result || "");
         const cleanName = file.name.replace(/\.png$/i, "");
@@ -125,10 +133,10 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
           kind,
           skinVariant
         );
-        onStateChange(next);
+        applyIfCurrent(reqId, next);
         onToast(`Added ${cleanName}`);
       } catch (err) {
-        await refreshLatestStateAfterSyncError(err);
+        await refreshLatestStateAfterSyncError(reqId, err);
       }
     };
     reader.readAsDataURL(file);
@@ -137,6 +145,7 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
 
   const handleEquipDefaultSteve = async () => {
     if (!activeAccount) return;
+    const reqId = ++wardrobeReqSeqRef.current;
     try {
       const next = await LauncherBridge.importAndEquipWardrobePng(
         activeAccount.id,
@@ -145,14 +154,15 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         "skin",
         "classic"
       );
-      onStateChange(next);
+      applyIfCurrent(reqId, next);
     } catch (err) {
-      await refreshLatestStateAfterSyncError(err);
+      await refreshLatestStateAfterSyncError(reqId, err);
     }
   };
 
   const handleEquipSkin = async (sha256: string, variant: SkinVariant) => {
     if (!activeAccount) return;
+    const reqId = ++wardrobeReqSeqRef.current;
     try {
       const next = await LauncherBridge.equipExistingWardrobeItem(
         activeAccount.id,
@@ -160,14 +170,15 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         "skin",
         variant
       );
-      onStateChange(next);
+      applyIfCurrent(reqId, next);
     } catch (err) {
-      await refreshLatestStateAfterSyncError(err);
+      await refreshLatestStateAfterSyncError(reqId, err);
     }
   };
 
   const handleSwitchVariant = async (nextVariant: SkinVariant) => {
     if (!activeAccount) return;
+    const reqId = ++wardrobeReqSeqRef.current;
     try {
       const next = await LauncherBridge.equipExistingWardrobeItem(
         activeAccount.id,
@@ -175,14 +186,15 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         "skin",
         nextVariant
       );
-      onStateChange(next);
+      applyIfCurrent(reqId, next);
     } catch (err) {
-      await refreshLatestStateAfterSyncError(err);
+      await refreshLatestStateAfterSyncError(reqId, err);
     }
   };
 
   const handleEquipCape = async (sha256: string) => {
     if (!activeAccount || isMicrosoft) return;
+    const reqId = ++wardrobeReqSeqRef.current;
     try {
       const next = await LauncherBridge.equipExistingWardrobeItem(
         activeAccount.id,
@@ -190,9 +202,9 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         "cape",
         skinVariant
       );
-      onStateChange(next);
+      applyIfCurrent(reqId, next);
     } catch (err) {
-      await refreshLatestStateAfterSyncError(err);
+      await refreshLatestStateAfterSyncError(reqId, err);
     }
   };
 
@@ -202,9 +214,10 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
     kind: WardrobeAssetKind
   ) => {
     e.stopPropagation();
+    const reqId = ++wardrobeReqSeqRef.current;
     try {
       const next = await LauncherBridge.removeWardrobeItem(sha256, kind);
-      onStateChange(next);
+      applyIfCurrent(reqId, next);
     } catch (err) {
       onToast(String(err));
     }
@@ -386,6 +399,7 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
                     type="button"
                     onClick={async () => {
                       if (!activeAccount) return;
+                      const reqId = ++wardrobeReqSeqRef.current;
                       try {
                         let next = activeAccount.custom_cape_sha256
                           ? await LauncherBridge.equipExistingWardrobeItem(
@@ -401,9 +415,9 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
                             null
                           );
                         }
-                        onStateChange(next);
+                        applyIfCurrent(reqId, next);
                       } catch (err) {
-                        await refreshLatestStateAfterSyncError(err);
+                        await refreshLatestStateAfterSyncError(reqId, err);
                       }
                     }}
                     className={`p-2.5 rounded-xl border transition-colors flex flex-col items-center justify-center gap-2 min-h-[84px] ${
@@ -425,14 +439,15 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
                           key={cape.id}
                           type="button"
                           onClick={async () => {
+                            const reqId = ++wardrobeReqSeqRef.current;
                             try {
                               const next = await LauncherBridge.selectOfficialCape(
                                 activeAccount.id,
                                 cape.id
                               );
-                              onStateChange(next);
+                              applyIfCurrent(reqId, next);
                             } catch (err) {
-                              await refreshLatestStateAfterSyncError(err);
+                              await refreshLatestStateAfterSyncError(reqId, err);
                             }
                           }}
                           className={`p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${

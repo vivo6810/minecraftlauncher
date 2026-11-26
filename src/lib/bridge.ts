@@ -27,30 +27,11 @@ export function isTauriDesktop(): boolean {
 }
 
 // --- Web Preview Persistence & Sample Monotone Assets (only used when !isTauriDesktop()) ---
-const LEGACY_STORAGE_KEY_V1 = "twilight_launcher_web_state_v1";
-const LEGACY_VFS_KEY_V1 = "twilight_launcher_web_vfs_v1";
-const STORAGE_KEY = "twilight_launcher_web_state_v2";
-const VFS_KEY = "twilight_launcher_web_vfs_v2";
+const STORAGE_KEY = "twilight_launcher_web_state_v1";
+const VFS_KEY = "twilight_launcher_web_vfs_v1";
 
 function migrateLegacyWebStorageIfNeeded(): void {
-  try {
-    if (!localStorage.getItem(STORAGE_KEY)) {
-      const legacyState = localStorage.getItem(LEGACY_STORAGE_KEY_V1);
-      if (legacyState) {
-        const parsedState = JSON.parse(legacyState);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(parsedState));
-      }
-    }
-    if (!localStorage.getItem(VFS_KEY)) {
-      const legacyVfs = localStorage.getItem(LEGACY_VFS_KEY_V1);
-      if (legacyVfs) {
-        const parsedVfs = JSON.parse(legacyVfs);
-        localStorage.setItem(VFS_KEY, JSON.stringify(parsedVfs));
-      }
-    }
-  } catch {
-    // Ignore corrupt legacy entries
-  }
+  // Keep original v1 storage keys intact so existing web-preview profiles & VFS edits persist seamlessly
 }
 
 function makeMonotoneScreenshotSvgDataUrl(title: string, seed: number): string {

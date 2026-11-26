@@ -28,6 +28,8 @@ const WardrobeView = React.lazy(() => import("./components/WardrobeView"));
 export const App: React.FC = () => {
   const [state, setState] = useState<LauncherStateSnapshot | null>(null);
   const [mcVersions, setMcVersions] = useState<MinecraftVersionEntry[]>([]);
+  const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [loadingVersions, setLoadingVersions] = useState(false);
   const [screen, setScreen] = useState<
     "home" | "profile" | "modrinth" | "accounts" | "settings"
   >("home");
@@ -36,12 +38,27 @@ export const App: React.FC = () => {
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
+  const loadMcVersions = async () => {
+    setLoadingVersions(true);
+    setVersionsError(null);
+    try {
+      const m = await LauncherBridge.fetchMcVersions();
+      setMcVersions(m.versions);
+    } catch (err) {
+      setVersionsError(String(err));
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
   useEffect(() => {
-    LauncherBridge.getState().then((s) => {
-      setState(s);
-      document.documentElement.setAttribute("data-theme", s.settings.theme);
-    });
-    LauncherBridge.fetchMcVersions().then((m) => setMcVersions(m.versions));
+    LauncherBridge.getState()
+      .then((s) => {
+        setState(s);
+        document.documentElement.setAttribute("data-theme", s.settings.theme);
+      })
+      .catch((err) => showToast(String(err)));
+    void loadMcVersions();
   }, []);
 
   useEffect(() => {
@@ -194,6 +211,9 @@ export const App: React.FC = () => {
                 <StartScreen
                   profiles={state.profiles}
                   mcVersions={mcVersions}
+                  versionsError={versionsError}
+                  loadingVersions={loadingVersions}
+                  onRetryVersions={() => void loadMcVersions()}
                   onLaunchProfile={(p) => void handleLaunch(p)}
                   onSelectProfile={(p, initialTab = "overview") => {
                     setSelectedProfileId(p.id);
