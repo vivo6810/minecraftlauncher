@@ -97,17 +97,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm install
 
-      - name: Build Tauri bundles (CI push / PR / manual dispatch)
-        if: "!startsWith(github.ref, 'refs/tags/v')"
-        uses: tauri-apps/tauri-action@v0
+      - name: Build Tauri native bundles
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NO_STRIP: true
-        with:
-          args: ${{ matrix.args }}
+          NO_STRIP: "true"
+        run: npx tauri build ${{ matrix.args }}
 
       - name: Upload Linux AppImage, DEB & RPM workflow artifacts
-        if: "!startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'ubuntu-22.04'"
+        if: matrix.platform == 'ubuntu-22.04'
         uses: actions/upload-artifact@v4
         with:
           name: TwilightLauncher-Linux-x86_64-bundles
@@ -118,7 +114,7 @@ jobs:
           if-no-files-found: warn
 
       - name: Upload Windows NSIS, MSI & portable .exe workflow artifacts
-        if: "!startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'"
+        if: matrix.platform == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
           name: TwilightLauncher-Windows-x64-bundles
@@ -128,37 +124,40 @@ jobs:
             target/release/bundle/msi/*.msi
           if-no-files-found: warn
 
-      - name: Build & Publish GitHub Release (on v* tag)
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: tauri-apps/tauri-action@v0
+      - name: Publish Linux AppImage, DEB & RPM to GitHub Release (on v* tag)
+        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'ubuntu-22.04'
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          NO_STRIP: true
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "TwilightLauncher ${{ github.ref_name }}"
-          releaseBody: |
-            ## TwilightLauncher ${{ github.ref_name }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || \
+            gh release create "${{ github.ref_name }}" \
+              --title "TwilightLauncher ${{ github.ref_name }}" \
+              --notes "Ultra-lightweight monotone Minecraft: Java Edition launcher (Windows & Linux)."
+          gh release upload "${{ github.ref_name }}" \
+            target/release/bundle/appimage/*.AppImage \
+            target/release/bundle/deb/*.deb \
+            target/release/bundle/rpm/*.rpm \
+            --clobber
 
-            Ultra-lightweight monotone Minecraft: Java Edition launcher built with Rust + Tauri v2 + React.
-
-            ### Downloads
-            - **Windows (Installer):** `*_x64-setup.exe` (NSIS) or `*_x64_en-US.msi` (MSI)
-            - **Windows (Portable):** `TwilightLauncher-portable-x64.exe`
-            - **Linux (Universal):** `*_amd64.AppImage`
-            - **Debian / Ubuntu / Mint / Pop!_OS:** `*_amd64.deb`
-            - **Fedora / RHEL / openSUSE:** `*.x86_64.rpm`
-          releaseDraft: false
-          prerelease: false
-          args: ${{ matrix.args }}
-
-      - name: Attach standalone portable .exe to GitHub Release
+      - name: Publish Windows NSIS, MSI & portable .exe to GitHub Release (on v* tag)
         if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
+          gh release view "${{ github.ref_name }}" 2>$null | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "${{ github.ref_name }}" `
+              --title "TwilightLauncher ${{ github.ref_name }}" `
+              --notes "Ultra-lightweight monotone Minecraft: Java Edition launcher (Windows & Linux)." 2>$null
+          }
           if (Test-Path "target/release/twilight-launcher.exe") {
-            Copy-Item "target/release/twilight-launcher.exe" "TwilightLauncher-portable-x64.exe"
-            gh release upload "${{ github.ref_name }}" "TwilightLauncher-portable-x64.exe" --clobber
+            Copy-Item "target/release/twilight-launcher.exe" "TwilightLauncher-portable-x64.exe" -Force
+          }
+          $files = @()
+          $files += Get-ChildItem "TwilightLauncher-portable-x64.exe" -ErrorAction SilentlyContinue
+          $files += Get-ChildItem "target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue
+          $files += Get-ChildItem "target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue
+          foreach ($f in $files) {
+            gh release upload "${{ github.ref_name }}" $f.FullName --clobber
           }
