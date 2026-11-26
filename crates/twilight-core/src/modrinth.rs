@@ -365,7 +365,7 @@ pub async fn install_modpack_as_new_profile(
         .await?;
 
     let profile_id = uuid::Uuid::new_v4().to_string();
-    let profile_dir = paths.ensure_profile_layout(&profile_id)?;
+    paths.ensure_profile_layout(&profile_id)?;
 
     let cursor = std::io::Cursor::new(archive_bytes);
     let mut zip_arch = zip::ZipArchive::new(cursor)?;
