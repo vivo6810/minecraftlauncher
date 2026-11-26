@@ -399,23 +399,33 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
                     type="button"
                     onClick={async () => {
                       if (!activeAccount) return;
+                      const hasCustomCape = Boolean(
+                        activeAccount.custom_cape_sha256
+                      );
+                      const hasOfficialCape =
+                        isMicrosoft && Boolean(activeAccount.official_cape_id);
+                      if (!hasCustomCape && !hasOfficialCape) return;
+
                       const reqId = ++wardrobeReqSeqRef.current;
                       try {
-                        let next = activeAccount.custom_cape_sha256
-                          ? await LauncherBridge.equipExistingWardrobeItem(
-                              activeAccount.id,
-                              "",
-                              "cape",
-                              skinVariant
-                            )
-                          : state;
-                        if (isMicrosoft && activeAccount.official_cape_id) {
+                        let next: LauncherStateSnapshot | null = null;
+                        if (hasCustomCape) {
+                          next = await LauncherBridge.equipExistingWardrobeItem(
+                            activeAccount.id,
+                            "",
+                            "cape",
+                            skinVariant
+                          );
+                        }
+                        if (hasOfficialCape) {
                           next = await LauncherBridge.selectOfficialCape(
                             activeAccount.id,
                             null
                           );
                         }
-                        applyIfCurrent(reqId, next);
+                        if (next) {
+                          applyIfCurrent(reqId, next);
+                        }
                       } catch (err) {
                         await refreshLatestStateAfterSyncError(reqId, err);
                       }

@@ -27,6 +27,8 @@ const WardrobeView = React.lazy(() => import("./components/WardrobeView"));
 
 export const App: React.FC = () => {
   const [state, setState] = useState<LauncherStateSnapshot | null>(null);
+  const [initError, setInitError] = useState<string | null>(null);
+  const [loadingState, setLoadingState] = useState(false);
   const [mcVersions, setMcVersions] = useState<MinecraftVersionEntry[]>([]);
   const [versionsError, setVersionsError] = useState<string | null>(null);
   const [loadingVersions, setLoadingVersions] = useState(false);
@@ -37,6 +39,21 @@ export const App: React.FC = () => {
   const [profileInitialTab, setProfileInitialTab] = useState("overview");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+
+  const loadLauncherState = async () => {
+    if (loadingState) return;
+    setLoadingState(true);
+    setInitError(null);
+    try {
+      const s = await LauncherBridge.getState();
+      setState(s);
+      document.documentElement.setAttribute("data-theme", s.settings.theme);
+    } catch (err) {
+      setInitError(String(err));
+    } finally {
+      setLoadingState(false);
+    }
+  };
 
   const loadMcVersions = async () => {
     setLoadingVersions(true);
@@ -52,12 +69,7 @@ export const App: React.FC = () => {
   };
 
   useEffect(() => {
-    LauncherBridge.getState()
-      .then((s) => {
-        setState(s);
-        document.documentElement.setAttribute("data-theme", s.settings.theme);
-      })
-      .catch((err) => showToast(String(err)));
+    void loadLauncherState();
     void loadMcVersions();
   }, []);
 
@@ -115,8 +127,22 @@ export const App: React.FC = () => {
     return (
       <div className="h-screen w-screen flex flex-col bg-bg text-fg overflow-hidden">
         <TitleBar />
-        <div className="flex-1 flex items-center justify-center font-mono text-xs text-muted">
-          Loading...
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center font-mono text-xs text-muted">
+          {initError ? (
+            <>
+              <span className="text-fg max-w-md break-words">{initError}</span>
+              <button
+                type="button"
+                disabled={loadingState}
+                onClick={() => void loadLauncherState()}
+                className="px-3.5 py-1.5 rounded-lg bg-fg text-bg font-sans font-semibold text-xs disabled:opacity-50"
+              >
+                {loadingState ? "Retrying..." : "Retry"}
+              </button>
+            </>
+          ) : (
+            <span>Loading...</span>
+          )}
         </div>
       </div>
     );
