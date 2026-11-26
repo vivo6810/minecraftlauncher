@@ -89,20 +89,41 @@ export const ProfileWorkspace: React.FC<Props> = ({
   const [jarReports, setJarReports] = useState<JarScanReport[]>([]);
   const [crashInput, setCrashInput] = useState("");
   const [diagnosis, setDiagnosis] = useState<CrashDiagnosis | null>(null);
+  const prevProfileIdRef = useRef(profile.id);
+  const submittedNameRef = useRef<string | null>(null);
+  const diagSeqRef = useRef(0);
 
   useEffect(() => {
     setTab(initialTab);
   }, [initialTab, profile.id]);
 
   useEffect(() => {
-    setNameDraft(profile.name);
+    if (prevProfileIdRef.current !== profile.id) {
+      prevProfileIdRef.current = profile.id;
+      submittedNameRef.current = null;
+      setNameDraft(profile.name);
+      return;
+    }
+    setNameDraft((curr) => {
+      if (submittedNameRef.current === null || curr === submittedNameRef.current) {
+        return profile.name;
+      }
+      return curr;
+    });
+    if (submittedNameRef.current === profile.name) {
+      submittedNameRef.current = null;
+    }
   }, [profile.id, profile.name]);
 
   useEffect(() => {
     let active = true;
-    LauncherBridge.fetchLoaderVersions(profile.loader, profile.mc_version).then((opts) => {
-      if (active) setLoaderOptions(opts);
-    });
+    LauncherBridge.fetchLoaderVersions(profile.loader, profile.mc_version)
+      .then((opts) => {
+        if (active) setLoaderOptions(opts);
+      })
+      .catch(() => {
+        if (active) setLoaderOptions([]);
+      });
     return () => {
       active = false;
     };
@@ -185,6 +206,8 @@ export const ProfileWorkspace: React.FC<Props> = ({
       return;
     }
     if (trimmed !== profile.name) {
+      submittedNameRef.current = trimmed;
+      setNameDraft(trimmed);
       void onSaveProfile({ ...profile, name: trimmed });
     }
   };
@@ -824,12 +847,25 @@ export const ProfileWorkspace: React.FC<Props> = ({
             </span>
             <textarea
               value={crashInput}
-              onChange={async (e) => {
+              onChange={(e) => {
                 const next = e.target.value;
                 setCrashInput(next);
-                setDiagnosis(
-                  next.trim() ? await LauncherBridge.diagnoseCrash(next) : null
-                );
+                const seq = ++diagSeqRef.current;
+                if (!next.trim()) {
+                  setDiagnosis(null);
+                  return;
+                }
+                void LauncherBridge.diagnoseCrash(next)
+                  .then((res) => {
+                    if (diagSeqRef.current === seq) {
+                      setDiagnosis(res);
+                    }
+                  })
+                  .catch(() => {
+                    if (diagSeqRef.current === seq) {
+                      setDiagnosis(null);
+                    }
+                  });
               }}
               rows={5}
               placeholder="Paste crash log..."

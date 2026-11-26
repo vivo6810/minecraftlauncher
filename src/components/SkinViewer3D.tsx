@@ -7,6 +7,7 @@ interface Props {
   skinUrl: string | null;
   capeUrl: string | null;
   variant: SkinVariant;
+  onDecodeError?: (msg: string) => void;
 }
 
 async function predecodeImage(src: string): Promise<HTMLImageElement> {
@@ -17,13 +18,23 @@ async function predecodeImage(src: string): Promise<HTMLImageElement> {
   return img;
 }
 
-export const SkinViewer3D: React.FC<Props> = ({ skinUrl, capeUrl, variant }) => {
+export const SkinViewer3D: React.FC<Props> = ({
+  skinUrl,
+  capeUrl,
+  variant,
+  onDecodeError,
+}) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewerRef = useRef<SkinViewer | null>(null);
   const mountedRef = useRef(false);
   const skinGenRef = useRef(0);
   const capeGenRef = useRef(0);
+  const onDecodeErrorRef = useRef(onDecodeError);
+
+  useEffect(() => {
+    onDecodeErrorRef.current = onDecodeError;
+  }, [onDecodeError]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -71,7 +82,8 @@ export const SkinViewer3D: React.FC<Props> = ({ skinUrl, capeUrl, variant }) => 
 
   useEffect(() => {
     const gen = ++skinGenRef.current;
-    const resolvedSkin = skinUrl || getDefaultSteveSkinDataUrl();
+    const fallbackSteve = getDefaultSteveSkinDataUrl();
+    const resolvedSkin = skinUrl || fallbackSteve;
     const resolvedModel = variant === "slim" ? "slim" : "default";
 
     void predecodeImage(resolvedSkin)
@@ -82,7 +94,13 @@ export const SkinViewer3D: React.FC<Props> = ({ skinUrl, capeUrl, variant }) => 
         return viewerRef.current.loadSkin(img, { model: resolvedModel });
       })
       .catch(() => {
-        // Ignore stale or invalid skin decode errors
+        if (!mountedRef.current || skinGenRef.current !== gen || !viewerRef.current) {
+          return;
+        }
+        void viewerRef.current.loadSkin(fallbackSteve, { model: "default" });
+        if (skinUrl) {
+          onDecodeErrorRef.current?.("Invalid skin PNG; reverted preview to Steve");
+        }
       });
   }, [skinUrl, variant]);
 

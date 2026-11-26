@@ -139,24 +139,14 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
     if (!activeAccount) return;
     setSkinVariant("classic");
     try {
-      if (isMicrosoft) {
-        const next = await LauncherBridge.importAndEquipWardrobePng(
-          activeAccount.id,
-          "Steve",
-          steveDataUrl,
-          "skin",
-          "classic"
-        );
-        onStateChange(next);
-      } else {
-        const next = await LauncherBridge.equipExistingWardrobeItem(
-          activeAccount.id,
-          "",
-          "skin",
-          "classic"
-        );
-        onStateChange(next);
-      }
+      const next = await LauncherBridge.importAndEquipWardrobePng(
+        activeAccount.id,
+        "Steve",
+        steveDataUrl,
+        "skin",
+        "classic"
+      );
+      onStateChange(next);
     } catch (err) {
       await refreshLatestStateAfterSyncError(err);
     }
@@ -551,6 +541,7 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
           skinUrl={activeSkinUrl}
           capeUrl={activeCapeUrl}
           variant={skinVariant}
+          onDecodeError={onToast}
         />
       </div>
     </div>

@@ -1,3 +1,5 @@
+use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -41,7 +43,7 @@ struct NeoForgeMavenVersions {
 
 #[derive(Debug, Deserialize)]
 struct ForgePromotionsSlim {
-    promos: std::collections::HashMap<String, String>,
+    promos: HashMap<String, String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -57,7 +59,59 @@ pub struct LoaderProfileLib {
     pub url: Option<String>,
 }
 
-/// Fetches available mod loader versions for a given Minecraft version.
+/// Computes the exact NeoForge version prefix for both `1.x[.y]` and `26.x[.y]` Minecraft releases.
+/// - `"1.21"`    -> `"21.0."`
+/// - `"1.21.11"` -> `"21.11."`
+/// - `"26.3"`    -> `"26.3.0."`
+/// - `"26.1.2"`  -> `"26.1.2."`
+pub fn neoforge_version_prefix_for_mc(mc_version: &str) -> String {
+    let base = mc_version.split('-').next().unwrap_or(mc_version).trim();
+    if let Some(after_one) = base.strip_prefix("1.") {
+        if after_one.contains('.') {
+            format!("{after_one}.")
+        } else {
+            format!("{after_one}.0.")
+        }
+    } else {
+        let segs: Vec<&str> = base.split('.').collect();
+        if segs.len() == 2 {
+            format!("{base}.0.")
+        } else {
+            format!("{base}.")
+        }
+    }
+}
+
+/// Parses a loader version string for newest-first semantic sorting.
+/// Higher `(numeric_parts, is_release, prerelease_num)` sorts earlier.
+pub fn compare_loader_versions_desc(a: &str, b: &str) -> Ordering {
+    fn parse_key(v: &str) -> (Vec<u32>, bool, Vec<u32>, &str) {
+        let (core, pre) = match v.split_once('-') {
+            Some((c, p)) => (c, Some(p)),
+            None => (v, None),
+        };
+        let nums: Vec<u32> = core
+            .split('.')
+            .map(|s| s.parse::<u32>().unwrap_or(0))
+            .collect();
+        let is_stable = pre.is_none();
+        let pre_nums: Vec<u32> = pre
+            .map(|p| {
+                p.split(|c: char| !c.is_ascii_digit())
+                    .filter(|s| !s.is_empty())
+                    .filter_map(|s| s.parse::<u32>().ok())
+                    .collect()
+            })
+            .unwrap_or_default();
+        (nums, is_stable, pre_nums, v)
+    }
+
+    let ka = parse_key(a);
+    let kb = parse_key(b);
+    kb.cmp(&ka)
+}
+
+/// Fetches available mod loader versions for a given Minecraft version, ordered newest-first.
 /// If `loader == ModLoaderKind::None`, returns an empty list (Vanilla).
 pub async fn list_loader_versions(
     client: &reqwest::Client,
@@ -93,14 +147,18 @@ pub async fn list_loader_versions(
                 .error_for_status()?
                 .json()
                 .await?;
-            Ok(items
+            let mut opts: Vec<LoaderVersionOption> = items
                 .into_iter()
                 .map(|i| LoaderVersionOption {
-                    stable: !i.loader.version.contains("beta"),
+                    stable: !i.loader.version.contains('-')
+                        && !i.loader.version.contains("beta")
+                        && !i.loader.version.contains("alpha"),
                     version: i.loader.version,
                     loader: ModLoaderKind::Quilt,
                 })
-                .collect())
+                .collect();
+            opts.sort_by(|a, b| compare_loader_versions_desc(&a.version, &b.version));
+            Ok(opts)
         }
         ModLoaderKind::Neoforge => {
             let resp: NeoForgeMavenVersions = client
@@ -110,46 +168,92 @@ pub async fn list_loader_versions(
                 .error_for_status()?
                 .json()
                 .await?;
-            // NeoForge versions map to MC minor.patch, e.g., MC 1.21.4 -> prefix "21.4."
-            let prefix = mc_version.strip_prefix("1.").unwrap_or(mc_version);
+            let prefix = neoforge_version_prefix_for_mc(mc_version);
             let mut matched: Vec<LoaderVersionOption> = resp
                 .versions
                 .into_iter()
-                .filter(|v| v.starts_with(prefix))
+                .filter(|v| v.starts_with(&prefix))
                 .map(|v| LoaderVersionOption {
-                    stable: !v.contains("beta"),
+                    stable: !v.contains("beta") && !v.contains("alpha"),
                     version: v,
                     loader: ModLoaderKind::Neoforge,
                 })
                 .collect();
-            matched.reverse();
+            matched.sort_by(|a, b| compare_loader_versions_desc(&a.version, &b.version));
             Ok(matched)
         }
         ModLoaderKind::Forge => {
-            let promos: ForgePromotionsSlim = client
+            let promos_opt: Option<ForgePromotionsSlim> = match client
                 .get("https://files.minecraftforge.net/net/minecraftforge/forge/promotions_slim.json")
                 .send()
-                .await?
-                .error_for_status()?
-                .json()
-                .await?;
-            let mut out = Vec::new();
-            let latest_key = format!("{mc_version}-latest");
-            let rec_key = format!("{mc_version}-recommended");
-            if let Some(v) = promos.promos.get(&rec_key) {
-                out.push(LoaderVersionOption {
-                    version: v.clone(),
-                    stable: true,
-                    loader: ModLoaderKind::Forge,
-                });
+                .await
+            {
+                Ok(r) if r.status().is_success() => r.json().await.ok(),
+                _ => None,
+            };
+
+            let rec_ver = promos_opt
+                .as_ref()
+                .and_then(|p| p.promos.get(&format!("{mc_version}-recommended")))
+                .cloned();
+
+            // Fetch full per-MC Forge build list from maven-metadata.json
+            if let Ok(resp) = client
+                .get("https://files.minecraftforge.net/net/minecraftforge/forge/maven-metadata.json")
+                .send()
+                .await
+            {
+                if resp.status().is_success() {
+                    if let Ok(all_map) = resp.json::<HashMap<String, Vec<String>>>().await {
+                        if let Some(raw_list) = all_map.get(mc_version) {
+                            let strip_prefix = format!("{mc_version}-");
+                            let mut builds: Vec<LoaderVersionOption> = raw_list
+                                .iter()
+                                .map(|entry| {
+                                    let clean = entry
+                                        .strip_prefix(&strip_prefix)
+                                        .unwrap_or(entry)
+                                        .to_string();
+                                    let is_stable = rec_ver
+                                        .as_ref()
+                                        .map(|rec| rec == &clean)
+                                        .unwrap_or_else(|| !clean.contains("beta"));
+                                    LoaderVersionOption {
+                                        version: clean,
+                                        stable: is_stable,
+                                        loader: ModLoaderKind::Forge,
+                                    }
+                                })
+                                .collect();
+                            builds.sort_by(|a, b| {
+                                compare_loader_versions_desc(&a.version, &b.version)
+                            });
+                            if !builds.is_empty() {
+                                return Ok(builds);
+                            }
+                        }
+                    }
+                }
             }
-            if let Some(v) = promos.promos.get(&latest_key) {
-                if !out.iter().any(|x| &x.version == v) {
+
+            // Fallback to promotions_slim.json if maven-metadata.json didn't list mc_version
+            let mut out = Vec::new();
+            if let Some(promos) = promos_opt {
+                if let Some(v) = promos.promos.get(&format!("{mc_version}-recommended")) {
                     out.push(LoaderVersionOption {
                         version: v.clone(),
-                        stable: false,
+                        stable: true,
                         loader: ModLoaderKind::Forge,
                     });
+                }
+                if let Some(v) = promos.promos.get(&format!("{mc_version}-latest")) {
+                    if !out.iter().any(|x| &x.version == v) {
+                        out.push(LoaderVersionOption {
+                            version: v.clone(),
+                            stable: rec_ver.is_none(),
+                            loader: ModLoaderKind::Forge,
+                        });
+                    }
                 }
             }
             Ok(out)

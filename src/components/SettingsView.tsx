@@ -32,6 +32,8 @@ export const SettingsView: React.FC<Props> = ({
   onToast,
 }) => {
   const [javas, setJavas] = useState<JavaRuntimeInfo[]>([]);
+  const [javaMajors, setJavaMajors] = useState<number[]>([8, 17, 21, 25]);
+  const [installingJavaMajor, setInstallingJavaMajor] = useState<number | null>(null);
   const [offlineName, setOfflineName] = useState("");
   const [javaToken, setJavaToken] = useState("");
   const [addingOffline, setAddingOffline] = useState(false);
@@ -39,7 +41,20 @@ export const SettingsView: React.FC<Props> = ({
   const [busyAccountId, setBusyAccountId] = useState<string | null>(null);
 
   useEffect(() => {
-    LauncherBridge.listPortableJavas().then(setJavas);
+    let active = true;
+    LauncherBridge.listPortableJavas()
+      .then((list) => {
+        if (active) setJavas(list);
+      })
+      .catch(() => {});
+    LauncherBridge.listAvailableJavaMajors()
+      .then((majors) => {
+        if (active && majors.length > 0) setJavaMajors(majors);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
   }, []);
 
   const handleAddOffline = async () => {
@@ -324,42 +339,53 @@ export const SettingsView: React.FC<Props> = ({
           Java
         </h3>
         <div className="rounded-2xl bg-surface border border-border divide-y divide-border">
-          {[8, 17, 21].map((major) => {
-            const installed = javas.find((j) => j.major_version === major);
-            return (
-              <div
-                key={major}
-                className="px-4 py-3 flex items-center justify-between gap-3"
-              >
-                <div className="flex items-center gap-2.5">
-                  <span className="text-xs font-medium font-mono">OpenJDK {major}</span>
-                  {installed && (
-                    <span className="text-[11px] font-mono text-muted">
-                      {installed.version_string}
-                    </span>
-                  )}
-                </div>
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try {
-                      const info = await LauncherBridge.installPortableJava(major);
-                      setJavas((prev) => [
-                        ...prev.filter((x) => x.major_version !== major),
-                        info,
-                      ]);
-                      onToast(`OpenJDK ${major} ready`);
-                    } catch (err) {
-                      onToast(String(err));
-                    }
-                  }}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fg text-bg text-xs font-medium"
+          {Array.from(new Set([...javaMajors, ...javas.map((j) => j.major_version)]))
+            .sort((a, b) => a - b)
+            .map((major) => {
+              const installed = javas.find((j) => j.major_version === major);
+              const busy = installingJavaMajor === major;
+              return (
+                <div
+                  key={major}
+                  className="px-4 py-3 flex items-center justify-between gap-3"
                 >
-                  <Download className="w-3 h-3" /> {installed ? "Verify" : "Install"}
-                </button>
-              </div>
-            );
-          })}
+                  <div className="flex items-center gap-2.5">
+                    <span className="text-xs font-medium font-mono">
+                      OpenJDK {major}
+                    </span>
+                    {installed && (
+                      <span className="text-[11px] font-mono text-muted">
+                        {installed.version_string}
+                      </span>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={busy}
+                    onClick={async () => {
+                      if (busy) return;
+                      setInstallingJavaMajor(major);
+                      try {
+                        const info = await LauncherBridge.installPortableJava(major);
+                        setJavas((prev) => [
+                          ...prev.filter((x) => x.major_version !== major),
+                          info,
+                        ]);
+                        onToast(`OpenJDK ${major} ready`);
+                      } catch (err) {
+                        onToast(String(err));
+                      } finally {
+                        setInstallingJavaMajor(null);
+                      }
+                    }}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-fg text-bg text-xs font-medium disabled:opacity-50"
+                  >
+                    <Download className="w-3 h-3" />{" "}
+                    {busy ? "Working..." : installed ? "Verify" : "Install"}
+                  </button>
+                </div>
+              );
+            })}
         </div>
       </section>
 

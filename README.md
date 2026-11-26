@@ -9,7 +9,7 @@
 ## Highlights
 
 - **Ultra-Lightweight Footprint:** Native **Rust (`twilight-core`) + Tauri v2** desktop architecture (~80–120 MB RAM) with concurrent async SHA-1 asset & library verification.
-- **Monotone Aesthetic & Spring Physics:** Pure obsidian/paper monotone palette with GPU-accelerated stretch/bounce spring animations, a dedicated **Start Screen**, an elastic **Dynamic Island** activity pill, and a **`Ctrl + K` Command Palette**.
+- **Monotone UI & Spring Physics:** Frameless custom window (`decorations: false`), obsidian/paper monotone chrome while preserving full original colors on all mods, skins, capes, and screenshots, plus a **`Ctrl + K` Command Palette**.
 - **Window & Launch Controls:** User-configurable on-launch window behavior (**defaults to Minimize on Launch**, with options for *Keep Open*, *Minimize to System Tray*, and *Close Launcher*) + **Auto-Enable Fullscreen** toggle (**OFF** by default).
 - **Twilight Shield (3-Layer Anti-Malware Mod Confinement):**
   1. **Native Session Token Vault:** Never passes real Microsoft `accessToken` strings into JVM memory or CLI arguments—brokers `/session/minecraft/join` over `127.0.0.1` in Rust.
@@ -30,7 +30,7 @@
   - Manage profile files directly inside TwilightLauncher: add `.jar`s, extract `.zip` archives, create folders, rename, delete, and edit `.toml` / `.json` / `.properties` / `.txt` files in the built-in **Monotone Config Editor**.
   - Dedicated **Screenshots** gallery per profile with zoom Lightbox, **1-click Copy Image to Clipboard**, and **Set as Profile Banner**.
 - **Automatic Portable Java Manager, Crash Doctor & Linux Gaming Tools:**
-  - Auto-downloads isolated portable Eclipse Temurin OpenJDK **8 / 17 / 21** runtimes per Minecraft version.
+  - Auto-downloads isolated portable Eclipse Temurin OpenJDK **8 / 17 / 21 / 25+** runtimes matching Mojang's `javaVersion` metadata per Minecraft release.
   - **Human-Readable Crash Doctor** translates JVM stack traces into plain English with 1-click fixes and privacy-scrubbed `mclo.gs` sharing.
   - First-class **Linux Gaming Toggles**: `DRI_PRIME=1` dGPU, NVIDIA Prime Offload, Native Wayland GLFW, Feral `gamemoderun`, and `mangohud`.
 
@@ -114,4 +114,4 @@ git push origin v0.1.0
 
 ## License
 
-MIT
+Licensed under the [Apache License, Version 2.0](./LICENSE).

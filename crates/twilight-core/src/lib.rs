@@ -155,4 +155,29 @@ mod tests {
         let fab = crash_doctor::analyze_crash_log("Mod sodium requires fabric-api 0.100.0 or later (missing)");
         assert_eq!(fab.fix_action_code.as_deref(), Some("install_fabric_api"));
     }
+
+    #[test]
+    fn java_and_loader_version_mappings_support_mc_26_and_java_25() {
+        assert_eq!(java_manager::required_java_major_for_mc("1.16.5"), 8);
+        assert_eq!(java_manager::required_java_major_for_mc("1.20.4"), 17);
+        assert_eq!(java_manager::required_java_major_for_mc("1.21.11"), 21);
+        assert_eq!(java_manager::required_java_major_for_mc("26.1"), 25);
+        assert_eq!(java_manager::required_java_major_for_mc("26.3"), 25);
+        assert_eq!(java_manager::required_java_major_for_mc("26.4-pre-1"), 25);
+
+        assert_eq!(loaders::neoforge_version_prefix_for_mc("1.21"), "21.0.");
+        assert_eq!(loaders::neoforge_version_prefix_for_mc("1.21.4"), "21.4.");
+        assert_eq!(loaders::neoforge_version_prefix_for_mc("26.3"), "26.3.0.");
+        assert_eq!(loaders::neoforge_version_prefix_for_mc("26.1.2"), "26.1.2.");
+
+        let mut quilt = vec![
+            "0.20.0-beta.9".to_string(),
+            "0.30.2".to_string(),
+            "0.31.0-beta.6".to_string(),
+            "0.29.1".to_string(),
+        ];
+        quilt.sort_by(|a, b| loaders::compare_loader_versions_desc(a, b));
+        assert_eq!(quilt[0], "0.31.0-beta.6");
+        assert_eq!(quilt[1], "0.30.2");
+    }
 }

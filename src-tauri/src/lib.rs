@@ -14,6 +14,8 @@ pub struct AppContext {
     pub paths: LauncherPaths,
     pub http: reqwest::Client,
     pub state: Mutex<LauncherStateSnapshot>,
+    pub skin_sync_lock: tokio::sync::Mutex<()>,
+    pub skin_sync_seq: Mutex<std::collections::HashMap<String, u64>>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -204,19 +206,19 @@ async fn import_and_equip_wardrobe_png(
     )
     .map_err(|e| e.to_string())?;
 
-    let premium_token = {
+    let sync_seq = {
         let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
         if !guard.wardrobe.iter().any(|w| w.sha256 == item.sha256 && w.kind == item.kind) {
             guard.wardrobe.insert(0, item.clone());
         }
-        let mut maybe_tok = None;
+        let mut needs_sync = false;
         if let Some(acct) = guard.accounts.iter_mut().find(|a| a.id == account_id) {
             match kind {
                 WardrobeAssetKind::Skin => {
                     acct.skin_sha256 = Some(item.sha256.clone());
                     acct.skin_variant = variant;
-                    if acct.account_type == AccountType::Microsoft {
-                        maybe_tok = acct.access_token.clone();
+                    if acct.account_type == AccountType::Microsoft && acct.access_token.is_some() {
+                        needs_sync = true;
                     }
                 }
                 WardrobeAssetKind::Cape => {
@@ -225,22 +227,78 @@ async fn import_and_equip_wardrobe_png(
             }
         }
         twilight_core::save_state(&ctx.paths, &guard).map_err(|e| e.to_string())?;
-        maybe_tok
+        if needs_sync {
+            let mut seq_map = ctx.skin_sync_seq.lock().map_err(|e| e.to_string())?;
+            let entry = seq_map.entry(account_id.clone()).or_insert(0);
+            *entry += 1;
+            Some(*entry)
+        } else {
+            None
+        }
     };
 
-    if let Some(tok) = premium_token {
-        if let Err(err) =
-            twilight_core::auth::upload_skin_to_mojang_premium(&ctx.http, &tok, png_bytes, variant)
-                .await
-        {
-            return Err(format!(
-                "Skin saved locally, but Mojang sync failed (select skin again to retry): {err}"
-            ));
-        }
+    if let Some(my_seq) = sync_seq {
+        sync_latest_premium_skin(&ctx, &account_id, my_seq).await?;
     }
 
     let guard = ctx.state.lock().map_err(|e| e.to_string())?;
     Ok(guard.clone())
+}
+
+async fn sync_latest_premium_skin(
+    ctx: &AppContext,
+    account_id: &str,
+    my_seq: u64,
+) -> Result<(), String> {
+    let _serial = ctx.skin_sync_lock.lock().await;
+    {
+        let seq_map = ctx.skin_sync_seq.lock().map_err(|e| e.to_string())?;
+        let latest_seq = seq_map.get(account_id).copied().unwrap_or(0);
+        if latest_seq != my_seq {
+            return Ok(());
+        }
+    }
+
+    let upload_info = {
+        let guard = ctx.state.lock().map_err(|e| e.to_string())?;
+        guard
+            .accounts
+            .iter()
+            .find(|a| a.id == account_id && a.account_type == AccountType::Microsoft)
+            .and_then(|acct| {
+                let tok = acct.access_token.clone()?;
+                let sha = acct.skin_sha256.clone()?;
+                if sha.is_empty() {
+                    return None;
+                }
+                Some((
+                    tok,
+                    ctx.paths.wardrobe_skins_dir().join(format!("{sha}.png")),
+                    acct.skin_variant,
+                ))
+            })
+    };
+
+    if let Some((tok, skin_path, active_variant)) = upload_info {
+        let png_bytes = std::fs::read(&skin_path).map_err(|err| {
+            format!(
+                "Skin selected locally, but reading local PNG for Mojang sync failed (select again to retry): {err}"
+            )
+        })?;
+        twilight_core::auth::upload_skin_to_mojang_premium(
+            &ctx.http,
+            &tok,
+            png_bytes,
+            active_variant,
+        )
+        .await
+        .map_err(|err| {
+            format!(
+                "Skin selected locally, but Mojang sync failed (select again to retry): {err}"
+            )
+        })?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -254,23 +312,19 @@ async fn equip_existing_wardrobe_item(
     if !sha256.is_empty() && !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
         return Err("Invalid wardrobe asset hash".to_string());
     }
-    let premium_upload = {
+    let sync_seq = {
         let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
-        let mut pending_upload: Option<(String, std::path::PathBuf)> = None;
+        let mut needs_sync = false;
         if let Some(acct) = guard.accounts.iter_mut().find(|a| a.id == account_id) {
             match kind {
                 WardrobeAssetKind::Skin => {
                     acct.skin_sha256 = if sha256.is_empty() {
                         None
                     } else {
-                        if acct.account_type == AccountType::Microsoft {
-                            if let Some(tok) = acct.access_token.clone() {
-                                let skin_path = ctx
-                                    .paths
-                                    .wardrobe_skins_dir()
-                                    .join(format!("{sha256}.png"));
-                                pending_upload = Some((tok, skin_path));
-                            }
+                        if acct.account_type == AccountType::Microsoft
+                            && acct.access_token.is_some()
+                        {
+                            needs_sync = true;
                         }
                         Some(sha256)
                     };
@@ -286,22 +340,18 @@ async fn equip_existing_wardrobe_item(
             }
         }
         twilight_core::save_state(&ctx.paths, &guard).map_err(|e| e.to_string())?;
-        pending_upload
+        if needs_sync {
+            let mut seq_map = ctx.skin_sync_seq.lock().map_err(|e| e.to_string())?;
+            let entry = seq_map.entry(account_id.clone()).or_insert(0);
+            *entry += 1;
+            Some(*entry)
+        } else {
+            None
+        }
     };
 
-    if let Some((tok, skin_path)) = premium_upload {
-        let png_bytes = std::fs::read(&skin_path).map_err(|err| {
-            format!(
-                "Skin selected locally, but reading local PNG for Mojang sync failed (select again to retry): {err}"
-            )
-        })?;
-        twilight_core::auth::upload_skin_to_mojang_premium(&ctx.http, &tok, png_bytes, variant)
-            .await
-            .map_err(|err| {
-                format!(
-                    "Skin selected locally, but Mojang sync failed (select again to retry): {err}"
-                )
-            })?;
+    if let Some(my_seq) = sync_seq {
+        sync_latest_premium_skin(&ctx, &account_id, my_seq).await?;
     }
 
     let guard = ctx.state.lock().map_err(|e| e.to_string())?;
@@ -653,6 +703,11 @@ fn list_portable_javas_cmd(ctx: State<'_, AppContext>) -> Vec<JavaRuntimeInfo> {
 }
 
 #[tauri::command]
+async fn list_available_java_majors_cmd(ctx: State<'_, AppContext>) -> Result<Vec<u32>, String> {
+    Ok(twilight_core::java_manager::fetch_available_java_majors(&ctx.http).await)
+}
+
+#[tauri::command]
 async fn install_portable_java_cmd(
     app: AppHandle,
     ctx: State<'_, AppContext>,
@@ -809,6 +864,8 @@ pub fn run() {
             paths,
             http,
             state: Mutex::new(initial_state),
+            skin_sync_lock: tokio::sync::Mutex::new(()),
+            skin_sync_seq: Mutex::new(std::collections::HashMap::new()),
         })
         .invoke_handler(tauri::generate_handler![
             get_launcher_state,
@@ -841,6 +898,7 @@ pub fn run() {
             scan_profile_mods_cmd,
             get_sandbox_status_cmd,
             list_portable_javas_cmd,
+            list_available_java_majors_cmd,
             install_portable_java_cmd,
             diagnose_crash_cmd,
             share_crash_log_cmd,

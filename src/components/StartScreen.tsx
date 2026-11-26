@@ -45,7 +45,7 @@ export const StartScreen: React.FC<Props> = ({
 }) => {
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newVersion, setNewVersion] = useState(mcVersions[0]?.id || "1.21.4");
+  const [newVersion, setNewVersion] = useState(mcVersions[0]?.id || "26.3");
   const [newLoader, setNewLoader] = useState<ModLoaderKind>("none");
 
   useEffect(() => {

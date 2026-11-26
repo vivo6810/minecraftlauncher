@@ -169,7 +169,7 @@ impl Default for Profile {
             name: "New Profile".to_string(),
             icon: "cube".to_string(),
             banner_screenshot: None,
-            mc_version: "1.21.4".to_string(),
+            mc_version: "26.3".to_string(),
             loader: ModLoaderKind::None,
             loader_version: "latest".to_string(),
             auto_update_loader: true,

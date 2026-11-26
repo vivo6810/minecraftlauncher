@@ -226,16 +226,10 @@ async fn download_single_verified(client: &reqwest::Client, task: &DownloadTask)
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let mut tmp_name = std::ffi::OsString::from(".");
-    if let Some(fname) = task.destination.file_name() {
-        tmp_name.push(fname);
-    } else {
-        tmp_name.push("artifact");
-    }
-    tmp_name.push(format!(".{}.part", uuid::Uuid::new_v4().simple()));
+    let tmp_name = format!(".twilight-{}.part", uuid::Uuid::new_v4().simple());
     let tmp_path = match task.destination.parent() {
-        Some(p) if !p.as_os_str().is_empty() => p.join(tmp_name),
-        _ => PathBuf::from(tmp_name),
+        Some(p) if !p.as_os_str().is_empty() => p.join(&tmp_name),
+        _ => PathBuf::from(&tmp_name),
     };
 
     let write_and_verify = async {

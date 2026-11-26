@@ -250,12 +250,14 @@ export const LauncherBridge = {
       // Fallback if preview iframe blocks external network
     }
     return {
-      latest: { release: "1.21.4", snapshot: "25w09b" },
+      latest: { release: "26.3", snapshot: "26.4-pre-1" },
       versions: [
+        { id: "26.3", type: "release", url: "", time: "", releaseTime: "2026-10-15T10:00:00Z" },
+        { id: "26.2", type: "release", url: "", time: "", releaseTime: "2026-07-10T10:00:00Z" },
+        { id: "26.1.2", type: "release", url: "", time: "", releaseTime: "2026-04-20T10:00:00Z" },
+        { id: "1.21.11", type: "release", url: "", time: "", releaseTime: "2025-12-09T10:00:00Z" },
         { id: "1.21.4", type: "release", url: "", time: "", releaseTime: "2024-12-03T10:00:00Z" },
-        { id: "1.21.3", type: "release", url: "", time: "", releaseTime: "2024-10-23T10:00:00Z" },
         { id: "1.21.1", type: "release", url: "", time: "", releaseTime: "2024-08-08T10:00:00Z" },
-        { id: "1.20.6", type: "release", url: "", time: "", releaseTime: "2024-04-29T10:00:00Z" },
         { id: "1.20.4", type: "release", url: "", time: "", releaseTime: "2023-12-07T10:00:00Z" },
         { id: "1.20.1", type: "release", url: "", time: "", releaseTime: "2023-06-12T10:00:00Z" },
         { id: "1.19.4", type: "release", url: "", time: "", releaseTime: "2023-03-14T10:00:00Z" },
@@ -263,7 +265,7 @@ export const LauncherBridge = {
         { id: "1.16.5", type: "release", url: "", time: "", releaseTime: "2021-01-15T10:00:00Z" },
         { id: "1.12.2", type: "release", url: "", time: "", releaseTime: "2017-09-18T10:00:00Z" },
         { id: "1.8.9", type: "release", url: "", time: "", releaseTime: "2015-12-09T10:00:00Z" },
-        { id: "25w09b", type: "snapshot", url: "", time: "", releaseTime: "2025-02-27T10:00:00Z" },
+        { id: "26.4-pre-1", type: "snapshot", url: "", time: "", releaseTime: "2026-11-18T10:00:00Z" },
       ],
     };
   },
@@ -273,41 +275,136 @@ export const LauncherBridge = {
     if (isTauriDesktop()) {
       return invoke("fetch_loader_versions", { loader, mcVersion });
     }
+
+    const compareDesc = (a: string, b: string): number => {
+      const parse = (v: string) => {
+        const idx = v.indexOf("-");
+        const core = idx === -1 ? v : v.slice(0, idx);
+        const pre = idx === -1 ? "" : v.slice(idx + 1);
+        const nums = core.split(".").map((n) => Number.parseInt(n, 10) || 0);
+        const preNums = pre
+          ? pre
+              .split(/\D+/)
+              .filter(Boolean)
+              .map((n) => Number.parseInt(n, 10) || 0)
+          : [];
+        return { nums, isStable: pre === "", preNums };
+      };
+      const ka = parse(a);
+      const kb = parse(b);
+      const len = Math.max(ka.nums.length, kb.nums.length);
+      for (let i = 0; i < len; i++) {
+        const diff = (kb.nums[i] ?? 0) - (ka.nums[i] ?? 0);
+        if (diff !== 0) return diff;
+      }
+      if (ka.isStable !== kb.isStable) return kb.isStable ? 1 : -1;
+      const plen = Math.max(ka.preNums.length, kb.preNums.length);
+      for (let i = 0; i < plen; i++) {
+        const diff = (kb.preNums[i] ?? 0) - (ka.preNums[i] ?? 0);
+        if (diff !== 0) return diff;
+      }
+      return b.localeCompare(a);
+    };
+
+    const neoforgePrefix = (mc: string): string => {
+      const base = mc.split("-")[0].trim();
+      if (base.startsWith("1.")) {
+        const rem = base.slice(2);
+        return rem.includes(".") ? `${rem}.` : `${rem}.0.`;
+      }
+      return base.split(".").length === 2 ? `${base}.0.` : `${base}.`;
+    };
+
     try {
       if (loader === "fabric") {
         const r = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${mcVersion}`);
         if (r.ok) {
           const data = await r.json();
-          return data.slice(0, 15).map((item: { loader: { version: string; stable?: boolean } }) => ({
+          return data.slice(0, 25).map((item: { loader: { version: string; stable?: boolean } }) => ({
             version: item.loader.version,
             stable: item.loader.stable ?? true,
-            loader: "fabric",
+            loader: "fabric" as const,
           }));
         }
       }
       if (loader === "quilt") {
         const r = await fetch(`https://meta.quiltmc.org/v3/versions/loader/${mcVersion}`);
         if (r.ok) {
-          const data = await r.json();
-          return data.slice(0, 15).map((item: { loader: { version: string } }) => ({
-            version: item.loader.version,
-            stable: !item.loader.version.includes("beta"),
-            loader: "quilt",
-          }));
+          const data: { loader: { version: string } }[] = await r.json();
+          return data
+            .map((item) => ({
+              version: item.loader.version,
+              stable:
+                !item.loader.version.includes("-") &&
+                !item.loader.version.includes("beta") &&
+                !item.loader.version.includes("alpha"),
+              loader: "quilt" as const,
+            }))
+            .sort((a, b) => compareDesc(a.version, b.version))
+            .slice(0, 25);
+        }
+      }
+      if (loader === "neoforge") {
+        const r = await fetch("/api-neoforge/api/maven/versions/releases/net/neoforged/neoforge");
+        if (r.ok) {
+          const data: { versions: string[] } = await r.json();
+          const pref = neoforgePrefix(mcVersion);
+          const matched = data.versions
+            .filter((v) => v.startsWith(pref))
+            .sort(compareDesc)
+            .slice(0, 25)
+            .map((v) => ({
+              version: v,
+              stable: !v.includes("beta") && !v.includes("alpha"),
+              loader: "neoforge" as const,
+            }));
+          if (matched.length > 0) return matched;
+        }
+      }
+      if (loader === "forge") {
+        const [metaRes, promoRes] = await Promise.all([
+          fetch("/api-forge/net/minecraftforge/forge/maven-metadata.json"),
+          fetch("/api-forge/net/minecraftforge/forge/promotions_slim.json"),
+        ]);
+        const promos: Record<string, string> = promoRes.ok
+          ? ((await promoRes.json()).promos ?? {})
+          : {};
+        const rec = promos[`${mcVersion}-recommended`];
+        if (metaRes.ok) {
+          const allMap: Record<string, string[]> = await metaRes.json();
+          const rawList = allMap[mcVersion] ?? [];
+          const strip = `${mcVersion}-`;
+          const matched = rawList
+            .map((entry) => (entry.startsWith(strip) ? entry.slice(strip.length) : entry))
+            .sort(compareDesc)
+            .slice(0, 25)
+            .map((v) => ({
+              version: v,
+              stable: rec ? v === rec : !v.includes("beta"),
+              loader: "forge" as const,
+            }));
+          if (matched.length > 0) return matched;
         }
       }
     } catch {
-      // Fallback below
+      // Offline fallback below
     }
+
+    const nfPref = neoforgePrefix(mcVersion);
     const defaults: Record<Exclude<ModLoaderKind, "none">, string[]> = {
-      fabric: ["0.16.10", "0.16.9", "0.16.7", "0.15.11"],
-      quilt: ["0.27.1", "0.26.4", "0.25.0"],
-      neoforge: ["21.4.88-beta", "21.4.76-beta", "21.1.92"],
-      forge: ["54.0.18", "47.3.12", "47.2.20"],
+      fabric: ["0.20.1", "0.20.0", "0.19.5", "0.18.4"],
+      quilt: ["0.30.2", "0.31.0-beta.6", "0.30.1", "0.29.2"],
+      neoforge: [`${nfPref}118`, `${nfPref}117`, `${nfPref}116`],
+      forge:
+        mcVersion === "26.3"
+          ? ["66.1.9", "66.1.8", "66.1.5"]
+          : mcVersion.startsWith("26.")
+            ? ["65.1.6", "64.1.6", "62.0.9"]
+            : ["61.2.5", "54.1.2", "47.3.12"],
     };
     return defaults[loader].map((v, i) => ({
       version: v,
-      stable: i === 0,
+      stable: !v.includes("beta") && (i === 0 || loader !== "forge"),
       loader,
     }));
   },
@@ -815,20 +912,55 @@ export const LauncherBridge = {
     };
   },
 
+  async listAvailableJavaMajors(): Promise<number[]> {
+    if (isTauriDesktop()) {
+      return invoke("list_available_java_majors_cmd");
+    }
+    const majors = new Set<number>([8, 17, 21, 25]);
+    try {
+      const r = await fetch("https://api.adoptium.net/v3/info/available_releases");
+      if (r.ok) {
+        const info: {
+          available_lts_releases?: number[];
+          most_recent_feature_release?: number;
+        } = await r.json();
+        for (const lts of info.available_lts_releases ?? []) {
+          if (lts >= 8 && lts !== 11) majors.add(lts);
+        }
+        if (
+          info.most_recent_feature_release &&
+          info.most_recent_feature_release > 25
+        ) {
+          majors.add(info.most_recent_feature_release);
+        }
+      }
+    } catch {
+      // Offline fallback keeps 8, 17, 21, 25
+    }
+    return Array.from(majors).sort((a, b) => a - b);
+  },
+
   async listPortableJavas(): Promise<JavaRuntimeInfo[]> {
     if (isTauriDesktop()) return invoke("list_portable_javas_cmd");
     return [
       {
+        major_version: 25,
+        vendor: "Eclipse Temurin (Portable)",
+        version_string: "25.0.5+10-jre",
+        executable_path: "shared/java/temurin-25/bin/java",
+        managed_portable: true,
+      },
+      {
         major_version: 21,
         vendor: "Eclipse Temurin (Portable)",
-        version_string: "21.0.5+11-jre",
+        version_string: "21.0.9+11-jre",
         executable_path: "shared/java/temurin-21/bin/java",
         managed_portable: true,
       },
       {
         major_version: 17,
         vendor: "Eclipse Temurin (Portable)",
-        version_string: "17.0.13+11-jre",
+        version_string: "17.0.17+10-jre",
         executable_path: "shared/java/temurin-17/bin/java",
         managed_portable: true,
       },
@@ -840,7 +972,7 @@ export const LauncherBridge = {
     return {
       major_version: majorVersion,
       vendor: "Eclipse Temurin (Portable)",
-      version_string: `${majorVersion}.0.2-jre`,
+      version_string: `${majorVersion}.0.5-jre`,
       executable_path: `shared/java/temurin-${majorVersion}/bin/java`,
       managed_portable: true,
     };
