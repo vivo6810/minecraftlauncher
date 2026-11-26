@@ -244,6 +244,9 @@ async fn equip_existing_wardrobe_item(
     kind: WardrobeAssetKind,
     variant: SkinVariant,
 ) -> Result<LauncherStateSnapshot, String> {
+    if !sha256.is_empty() && !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Invalid wardrobe asset hash".to_string());
+    }
     let premium_upload = {
         let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
         let mut pending_upload: Option<(String, std::path::PathBuf)> = None;
@@ -298,6 +301,9 @@ fn remove_wardrobe_item(
     sha256: String,
     kind: WardrobeAssetKind,
 ) -> Result<LauncherStateSnapshot, String> {
+    if sha256.is_empty() || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err("Invalid wardrobe asset hash".to_string());
+    }
     let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
     guard
         .wardrobe

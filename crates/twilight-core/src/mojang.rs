@@ -226,7 +226,7 @@ async fn download_single_verified(client: &reqwest::Client, task: &DownloadTask)
         tokio::fs::create_dir_all(parent).await?;
     }
 
-    let tmp_path = task.destination.with_extension("part");
+    let tmp_path = PathBuf::from(format!("{}.part", task.destination.display()));
     let resp = client
         .get(&task.url)
         .send()

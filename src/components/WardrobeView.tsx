@@ -235,7 +235,15 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
                 return (
                   <div
                     key={skin.sha256}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => void handleEquipSkin(skin.sha256, skin.variant)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        void handleEquipSkin(skin.sha256, skin.variant);
+                      }
+                    }}
                     className={`group relative cursor-pointer p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${
                       selected
                         ? "border-fg bg-elevated"
@@ -364,7 +372,15 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
                 return (
                   <div
                     key={cape.sha256}
+                    role="button"
+                    tabIndex={0}
                     onClick={() => void handleEquipCape(cape.sha256)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        void handleEquipCape(cape.sha256);
+                      }
+                    }}
                     className={`group relative cursor-pointer p-2.5 rounded-xl border transition-colors flex flex-col items-center gap-2 ${
                       selected
                         ? "border-fg bg-elevated"
