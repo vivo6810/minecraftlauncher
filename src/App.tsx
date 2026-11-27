@@ -1,77 +1,78 @@
-import React, { useEffect, useState } from "react";
+import React, { Suspense, useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Command,
   Compass,
   Home,
   Settings as SettingsIcon,
-  SunMoon,
   User,
 } from "lucide-react";
-import { listen } from "@tauri-apps/api/event";
-import { LauncherBridge, isTauriDesktop } from "./lib/bridge";
+import { LauncherBridge } from "./lib/bridge";
 import {
   BOUNCE_SPRING,
   ELASTIC_SPRING,
-  type IslandActivity,
   type LauncherSettings,
   type LauncherStateSnapshot,
   type MinecraftVersionEntry,
   type Profile,
 } from "./types/launcher";
-import { DynamicIsland } from "./components/DynamicIsland";
+import { TitleBar } from "./components/TitleBar";
 import { CommandPalette } from "./components/CommandPalette";
 import { StartScreen } from "./components/StartScreen";
 import { ProfileWorkspace } from "./components/ProfileWorkspace";
 import { ModrinthBrowser } from "./components/ModrinthBrowser";
-import { AccountsWardrobe } from "./components/AccountsWardrobe";
 import { SettingsView } from "./components/SettingsView";
+
+const WardrobeView = React.lazy(() => import("./components/WardrobeView"));
 
 export const App: React.FC = () => {
   const [state, setState] = useState<LauncherStateSnapshot | null>(null);
+  const [initError, setInitError] = useState<string | null>(null);
+  const [loadingState, setLoadingState] = useState(false);
   const [mcVersions, setMcVersions] = useState<MinecraftVersionEntry[]>([]);
-  const [screen, setScreen] = useState<"home" | "profile" | "modrinth" | "accounts" | "settings">(
-    "home"
-  );
+  const [versionsError, setVersionsError] = useState<string | null>(null);
+  const [loadingVersions, setLoadingVersions] = useState(false);
+  const [screen, setScreen] = useState<
+    "home" | "profile" | "modrinth" | "accounts" | "settings"
+  >("home");
   const [selectedProfileId, setSelectedProfileId] = useState<string | null>(null);
   const [profileInitialTab, setProfileInitialTab] = useState("overview");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
 
-  const [island, setIsland] = useState<IslandActivity>({
-    status: "Idle",
-    progress: 0,
-    active: false,
-    runningProfileName: null,
-    startedAtMs: null,
-  });
-
-  useEffect(() => {
-    LauncherBridge.getState().then((s) => {
+  const loadLauncherState = async () => {
+    if (loadingState) return;
+    setLoadingState(true);
+    setInitError(null);
+    try {
+      const s = await LauncherBridge.getState();
       setState(s);
       document.documentElement.setAttribute("data-theme", s.settings.theme);
-    });
-    LauncherBridge.fetchMcVersions().then((m) => setMcVersions(m.versions));
-
-    if (isTauriDesktop()) {
-      const unlistenPromise = listen<{ status: string; progress: number; active: boolean }>(
-        "twilight://island",
-        (ev) => {
-          setIsland((prev) => ({
-            ...prev,
-            status: ev.payload.status,
-            progress: ev.payload.progress,
-            active: ev.payload.active,
-          }));
-        }
-      );
-      return () => {
-        unlistenPromise.then((fn) => fn());
-      };
+    } catch (err) {
+      setInitError(String(err));
+    } finally {
+      setLoadingState(false);
     }
+  };
+
+  const loadMcVersions = async () => {
+    setLoadingVersions(true);
+    setVersionsError(null);
+    try {
+      const m = await LauncherBridge.fetchMcVersions();
+      setMcVersions(m.versions);
+    } catch (err) {
+      setVersionsError(String(err));
+    } finally {
+      setLoadingVersions(false);
+    }
+  };
+
+  useEffect(() => {
+    void loadLauncherState();
+    void loadMcVersions();
   }, []);
 
-  // Global Ctrl+K / Cmd+K shortcut
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
@@ -87,7 +88,7 @@ export const App: React.FC = () => {
     setToast(msg);
     window.setTimeout(() => {
       setToast((curr) => (curr === msg ? null : curr));
-    }, 3400);
+    }, 3000);
   };
 
   const handleSaveSettings = async (nextSettings: LauncherSettings) => {
@@ -99,14 +100,14 @@ export const App: React.FC = () => {
   const handleLaunch = async (profile: Profile) => {
     if (!state) return;
 
-    // Pre-flight check in web preview if block_high_risk_jars is enabled
-    if (state.settings.shield.jar_scanner && state.settings.shield.block_high_risk_jars) {
+    if (
+      state.settings.shield.jar_scanner &&
+      state.settings.shield.block_high_risk_jars
+    ) {
       const reports = await LauncherBridge.scanProfileMods(profile.id);
       const bad = reports.filter((r) => !r.safe);
       if (bad.length > 0) {
-        showToast(
-          `Twilight Shield blocked launch: malicious bytecode flagged in ${bad[0].file_name}!`
-        );
+        showToast(`Blocked flagged mod: ${bad[0].file_name}`);
         setSelectedProfileId(profile.id);
         setProfileInitialTab("shield");
         setScreen("profile");
@@ -114,94 +115,60 @@ export const App: React.FC = () => {
       }
     }
 
-    const steps = [
-      { msg: `Twilight Shield scanning ${profile.name}/mods...`, p: 0.18 },
-      { msg: `Verifying Portable OpenJDK & ${profile.loader === "none" ? "Vanilla" : profile.loader}...`, p: 0.52 },
-      { msg: `Spawning sandboxed JVM (${state.settings.window_launch_action})...`, p: 0.88 },
-    ];
-
-    for (const st of steps) {
-      setIsland((prev) => ({ ...prev, status: st.msg, progress: st.p, active: true }));
-      await new Promise((r) => setTimeout(r, 320));
+    try {
+      await LauncherBridge.launchProfile(profile.id);
+      showToast(`Launching ${profile.name}`);
+    } catch (err) {
+      showToast(String(err));
     }
-
-    await LauncherBridge.launchProfile(profile.id);
-
-    setIsland({
-      status: `${profile.name} Running`,
-      progress: 1,
-      active: false,
-      runningProfileName: `${profile.name} (${profile.mc_version})`,
-      startedAtMs: Date.now(),
-    });
-
-    showToast(
-      `Launched ${profile.name} • Window action: ${state.settings.window_launch_action} • Fullscreen: ${
-        (profile.fullscreen_override ?? state.settings.auto_fullscreen) ? "ON" : "OFF"
-      }`
-    );
   };
 
   if (!state) {
     return (
-      <div className="h-screen w-screen flex items-center justify-center bg-bg text-fg font-mono text-xs">
-        Booting TwilightLauncher...
+      <div className="h-screen w-screen flex flex-col bg-bg text-fg overflow-hidden">
+        <TitleBar />
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center font-mono text-xs text-muted">
+          {initError ? (
+            <>
+              <span className="text-fg max-w-md break-words">{initError}</span>
+              <button
+                type="button"
+                disabled={loadingState}
+                onClick={() => void loadLauncherState()}
+                className="px-3.5 py-1.5 rounded-lg bg-fg text-bg font-sans font-semibold text-xs disabled:opacity-50"
+              >
+                {loadingState ? "Retrying..." : "Retry"}
+              </button>
+            </>
+          ) : (
+            <span>Loading...</span>
+          )}
+        </div>
       </div>
     );
   }
 
-  const activeAccount = state.accounts.find((a) => a.active) ?? state.accounts[0];
   const selectedProfile =
     state.profiles.find((p) => p.id === selectedProfileId) ?? state.profiles[0];
 
-  const shieldActiveCount = [
-    state.settings.shield.token_vault,
-    state.settings.shield.os_sandbox,
-    state.settings.shield.jar_scanner,
-  ].filter(Boolean).length;
-
   const navItems = [
-    { id: "home" as const, label: "Start", icon: Home },
+    { id: "home" as const, label: "Profiles", icon: Home },
     { id: "modrinth" as const, label: "Modrinth", icon: Compass },
     { id: "accounts" as const, label: "Wardrobe", icon: User },
     { id: "settings" as const, label: "Settings", icon: SettingsIcon },
   ];
 
+  const isWardrobeScreen = screen === "accounts";
+
   return (
-    <div className="h-screen w-screen flex bg-bg text-fg overflow-hidden">
-      {/* Elastic Dynamic Island */}
-      <DynamicIsland
-        island={island}
-        shieldActiveCount={shieldActiveCount}
-        onStopSimulatedRun={() =>
-          setIsland((prev) => ({
-            ...prev,
-            runningProfileName: null,
-            startedAtMs: null,
-          }))
-        }
-      />
+    <div className="h-screen w-screen flex flex-col bg-bg text-fg overflow-hidden">
+      {/* Custom Frameless TitleBar (Replaces Native OS Titlebar) */}
+      <TitleBar />
 
-      {/* Left Minimal Monotone Dock */}
-      <aside className="w-20 md:w-56 shrink-0 border-r border-border bg-surface/70 flex flex-col justify-between p-3 md:p-4">
-        <div className="space-y-6">
-          {/* Brand Mark */}
-          <div
-            onClick={() => setScreen("home")}
-            className="cursor-pointer flex items-center gap-3 px-2 pt-1"
-          >
-            <div className="w-9 h-9 rounded-xl bg-fg text-bg flex items-center justify-center font-mono font-black text-sm shadow">
-              TL
-            </div>
-            <div className="hidden md:block">
-              <div className="text-sm font-bold tracking-tight leading-none">
-                TwilightLauncher
-              </div>
-              <div className="text-[10px] font-mono text-muted mt-1">v0.1.0 • MONOTONE</div>
-            </div>
-          </div>
-
-          <nav className="space-y-1.5">
+      <div className="flex-1 min-h-0 flex overflow-hidden">
+        {/* Left Navigation Dock */}
+        <aside className="w-16 md:w-48 shrink-0 border-r border-border bg-surface/70 flex flex-col justify-between p-2.5 md:p-3">
+          <nav className="space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
               const active =
@@ -211,7 +178,7 @@ export const App: React.FC = () => {
                   key={item.id}
                   type="button"
                   onClick={() => setScreen(item.id)}
-                  className={`relative w-full flex items-center justify-center md:justify-start gap-3 px-3.5 py-2.5 rounded-xl text-xs font-medium transition-colors ${
+                  className={`relative w-full flex items-center justify-center md:justify-start gap-2.5 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors ${
                     active ? "text-bg" : "text-muted hover:text-fg"
                   }`}
                 >
@@ -228,9 +195,7 @@ export const App: React.FC = () => {
               );
             })}
           </nav>
-        </div>
 
-        <div className="space-y-2">
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
@@ -238,194 +203,148 @@ export const App: React.FC = () => {
           >
             <span className="flex items-center gap-2">
               <Command className="w-3.5 h-3.5" />
-              <span className="hidden md:inline">Commands</span>
+              <span className="hidden md:inline">Search</span>
             </span>
             <kbd className="hidden md:inline font-mono text-[10px]">Ctrl+K</kbd>
           </button>
+        </aside>
 
-          <button
-            type="button"
-            onClick={() =>
-              handleSaveSettings({
-                ...state.settings,
-                theme: state.settings.theme === "dark" ? "light" : "dark",
-              })
-            }
-            className="w-full flex items-center justify-center md:justify-start gap-2.5 px-3 py-2 rounded-xl bg-elevated border border-border text-xs text-muted hover:text-fg"
-          >
-            <SunMoon className="w-3.5 h-3.5" />
-            <span className="hidden md:inline capitalize">
-              {state.settings.theme} Monotone
-            </span>
-          </button>
-        </div>
-      </aside>
-
-      {/* Main Scrollable Content Stage */}
-      <main className="flex-1 overflow-y-auto pt-14 pb-10 px-5 md:px-9">
-        <div className="max-w-6xl mx-auto">
-          <AnimatePresence mode="wait">
-            {screen === "home" && (
-              <motion.div
-                key="home"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={ELASTIC_SPRING}
-              >
+        {/* Main Content Area */}
+        <main
+          className={
+            isWardrobeScreen
+              ? "flex-1 min-w-0 h-full overflow-hidden"
+              : "flex-1 min-w-0 h-full overflow-y-auto px-5 md:px-7 py-6"
+          }
+        >
+          {isWardrobeScreen ? (
+            <Suspense
+              fallback={
+                <div className="w-full h-full flex items-center justify-center font-mono text-xs text-muted">
+                  Loading...
+                </div>
+              }
+            >
+              <WardrobeView
+                state={state}
+                onStateChange={setState}
+                onToast={showToast}
+              />
+            </Suspense>
+          ) : (
+            <div className="max-w-5xl mx-auto">
+              {screen === "home" && (
                 <StartScreen
                   profiles={state.profiles}
-                  activeAccount={activeAccount}
                   mcVersions={mcVersions}
-                  onLaunchProfile={handleLaunch}
-                  onSelectProfile={(prof, tab = "overview") => {
-                    setSelectedProfileId(prof.id);
-                    setProfileInitialTab(tab);
+                  versionsError={versionsError}
+                  loadingVersions={loadingVersions}
+                  onRetryVersions={() => void loadMcVersions()}
+                  onLaunchProfile={(p) => void handleLaunch(p)}
+                  onSelectProfile={(p, initialTab = "overview") => {
+                    setSelectedProfileId(p.id);
+                    setProfileInitialTab(initialTab);
                     setScreen("profile");
                   }}
                   onOpenUniversalModrinth={() => setScreen("modrinth")}
-                  onOpenWardrobe={() => setScreen("accounts")}
                   onCreateProfile={async (created) => {
-                    const nextProfiles = await LauncherBridge.upsertProfile(created);
+                    const updated = await LauncherBridge.upsertProfile(created);
                     setState((prev) =>
-                      prev ? { ...prev, profiles: nextProfiles } : prev
+                      prev ? { ...prev, profiles: updated } : prev
                     );
-                    showToast(`Created profile "${created.name}"`);
+                    setSelectedProfileId(created.id);
+                    setProfileInitialTab("overview");
+                    setScreen("profile");
                   }}
                 />
-              </motion.div>
-            )}
+              )}
 
-            {screen === "profile" && selectedProfile && (
-              <motion.div
-                key={`prof-${selectedProfile.id}`}
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={ELASTIC_SPRING}
-              >
+              {screen === "profile" && selectedProfile && (
                 <ProfileWorkspace
+                  key={selectedProfile.id}
                   profile={selectedProfile}
                   allProfiles={state.profiles}
                   initialTab={profileInitialTab}
                   mcVersions={mcVersions}
                   onBack={() => setScreen("home")}
-                  onLaunch={handleLaunch}
+                  onLaunch={(p) => void handleLaunch(p)}
                   onSaveProfile={async (updated) => {
-                    const nextProfiles = await LauncherBridge.upsertProfile(updated);
+                    const nextList = await LauncherBridge.upsertProfile(updated);
                     setState((prev) =>
-                      prev ? { ...prev, profiles: nextProfiles } : prev
+                      prev ? { ...prev, profiles: nextList } : prev
                     );
                   }}
                   onDeleteProfile={async (id) => {
-                    const nextProfiles = await LauncherBridge.deleteProfile(id);
+                    const nextList = await LauncherBridge.deleteProfile(id);
                     setState((prev) =>
-                      prev ? { ...prev, profiles: nextProfiles } : prev
+                      prev ? { ...prev, profiles: nextList } : prev
                     );
+                    setSelectedProfileId(nextList[0]?.id ?? null);
                     setScreen("home");
-                    showToast("Deleted profile");
                   }}
                   onProfilesChanged={(profiles, created) => {
                     setState((prev) => (prev ? { ...prev, profiles } : prev));
                     if (created) {
                       setSelectedProfileId(created.id);
-                      setProfileInitialTab("overview");
                     }
                   }}
                   onToast={showToast}
-                  onSetIsland={(status, progress, active) =>
-                    setIsland((prev) => ({ ...prev, status, progress, active }))
-                  }
                 />
-              </motion.div>
-            )}
+              )}
 
-            {screen === "modrinth" && (
-              <motion.div
-                key="modrinth-universal"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={ELASTIC_SPRING}
-              >
+              {screen === "modrinth" && (
                 <ModrinthBrowser
                   scopedProfile={null}
                   profiles={state.profiles}
-                  onBack={() => setScreen("home")}
-                  onProfilesChanged={(profiles, newlyCreated) => {
+                  onProfilesChanged={(profiles, created) => {
                     setState((prev) => (prev ? { ...prev, profiles } : prev));
-                    if (newlyCreated) {
-                      setSelectedProfileId(newlyCreated.id);
+                    if (created) {
+                      setSelectedProfileId(created.id);
                       setProfileInitialTab("overview");
                       setScreen("profile");
                     }
                   }}
                   onToast={showToast}
-                  onSetIsland={(status, progress, active) =>
-                    setIsland((prev) => ({ ...prev, status, progress, active }))
-                  }
                 />
-              </motion.div>
-            )}
+              )}
 
-            {screen === "accounts" && (
-              <motion.div
-                key="accounts"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={ELASTIC_SPRING}
-              >
-                <AccountsWardrobe
-                  accounts={state.accounts}
-                  wardrobe={state.wardrobe}
-                  onStateUpdated={setState}
-                  onToast={showToast}
-                />
-              </motion.div>
-            )}
-
-            {screen === "settings" && (
-              <motion.div
-                key="settings"
-                initial={{ opacity: 0, y: 10 }}
-                animate={{ opacity: 1, y: 0 }}
-                exit={{ opacity: 0, y: -8 }}
-                transition={ELASTIC_SPRING}
-              >
+              {screen === "settings" && (
                 <SettingsView
                   settings={state.settings}
+                  accounts={state.accounts}
                   onSaveSettings={handleSaveSettings}
+                  onStateChange={setState}
                   onToast={showToast}
                 />
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-      </main>
+              )}
+            </div>
+          )}
+        </main>
+      </div>
 
-      {/* Ctrl+K Elastic Command Palette */}
+      {/* Command Palette */}
       <CommandPalette
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         profiles={state.profiles}
         accounts={state.accounts}
-        onLaunchProfile={handleLaunch}
-        onOpenProfileTab={(prof, t) => {
-          setSelectedProfileId(prof.id);
-          setProfileInitialTab(t);
+        onLaunchProfile={(p) => void handleLaunch(p)}
+        onOpenProfileTab={(p, tab) => {
+          setSelectedProfileId(p.id);
+          setProfileInitialTab(tab);
           setScreen("profile");
         }}
         onNavigate={(target) =>
-          setScreen(target as "home" | "modrinth" | "accounts" | "settings")
+          setScreen(
+            target as "home" | "profile" | "modrinth" | "accounts" | "settings"
+          )
         }
-        onSwitchAccount={async (accountId) => {
-          const next = await LauncherBridge.setActiveAccount(accountId);
+        onSwitchAccount={async (id) => {
+          const next = await LauncherBridge.setActiveAccount(id);
           setState(next);
-          showToast("Switched active account");
         }}
         onToggleTheme={() =>
-          handleSaveSettings({
+          void handleSaveSettings({
             ...state.settings,
             theme: state.settings.theme === "dark" ? "light" : "dark",
           })
@@ -436,11 +355,11 @@ export const App: React.FC = () => {
       <AnimatePresence>
         {toast && (
           <motion.div
-            initial={{ opacity: 0, y: 20, scale: 0.92 }}
+            initial={{ opacity: 0, y: 16, scale: 0.94 }}
             animate={{ opacity: 1, y: 0, scale: 1 }}
-            exit={{ opacity: 0, y: 12, scale: 0.94 }}
+            exit={{ opacity: 0, y: 12, scale: 0.96 }}
             transition={ELASTIC_SPRING}
-            className="fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-2xl bg-fg text-bg text-xs font-medium shadow-2xl"
+            className="fixed bottom-4 right-4 z-[110] px-3.5 py-2 rounded-xl bg-fg text-bg text-xs font-medium shadow-xl"
           >
             {toast}
           </motion.div>
@@ -451,3 +370,4 @@ export const App: React.FC = () => {
 };
 
 export default App;
+

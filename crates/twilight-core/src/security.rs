@@ -44,14 +44,46 @@ pub async fn spawn_token_vault_broker(
             let req_client = Arc::clone(&http_client);
 
             tokio::spawn(async move {
-                let mut buf = vec![0u8; 16384];
-                let Ok(n) = stream.read(&mut buf).await else {
-                    return;
-                };
-                if n == 0 {
+                let mut raw_bytes = Vec::with_capacity(4096);
+                let mut chunk = [0u8; 4096];
+                let mut header_end = None;
+                let mut content_len = 0usize;
+
+                loop {
+                    let Ok(n) = stream.read(&mut chunk).await else {
+                        return;
+                    };
+                    if n == 0 {
+                        break;
+                    }
+                    raw_bytes.extend_from_slice(&chunk[..n]);
+                    if raw_bytes.len() > 65536 {
+                        return;
+                    }
+                    if header_end.is_none() {
+                        if let Some(pos) = raw_bytes.windows(4).position(|w| w == b"\r\n\r\n") {
+                            let hdr_str = String::from_utf8_lossy(&raw_bytes[..pos]);
+                            for line in hdr_str.lines() {
+                                if let Some((k, v)) = line.split_once(':') {
+                                    if k.trim().eq_ignore_ascii_case("content-length") {
+                                        content_len = v.trim().parse::<usize>().unwrap_or(0);
+                                    }
+                                }
+                            }
+                            header_end = Some(pos + 4);
+                        }
+                    }
+                    if let Some(end) = header_end {
+                        if raw_bytes.len() >= end + content_len {
+                            break;
+                        }
+                    }
+                }
+
+                if raw_bytes.is_empty() {
                     return;
                 }
-                let raw = String::from_utf8_lossy(&buf[..n]);
+                let raw = String::from_utf8_lossy(&raw_bytes);
                 let first_line = raw.lines().next().unwrap_or("");
                 let mut parts = first_line.split_whitespace();
                 let method = parts.next().unwrap_or("GET");
@@ -84,7 +116,7 @@ pub async fn spawn_token_vault_broker(
                     let _ = stream
                         .write_all(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n\r\n")
                         .await;
-                } else if method == "GET" {
+                } else if method == "GET" && path.starts_with('/') && !path.starts_with("//") {
                     // Forward read-only profile/hasJoined lookups transparently to Mojang
                     let upstream_url = format!("https://sessionserver.mojang.com{path}");
                     if let Ok(resp) = req_client.get(&upstream_url).send().await {
@@ -100,6 +132,10 @@ pub async fn spawn_token_vault_broker(
                     }
                     let _ = stream
                         .write_all(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n")
+                        .await;
+                } else {
+                    let _ = stream
+                        .write_all(b"HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n")
                         .await;
                 }
             });
@@ -197,6 +233,15 @@ pub fn wrap_linux_bwrap_command(
         bwrap_args.push("--ro-bind".to_string());
         bwrap_args.push("/tmp/.X11-unix".to_string());
         bwrap_args.push("/tmp/.X11-unix".to_string());
+    }
+
+    // Read-only bind XDG_RUNTIME_DIR so Wayland/PipeWire/PulseAudio client sockets work without exposing host runtime dir to writes
+    if let Ok(xdg_rt) = std::env::var("XDG_RUNTIME_DIR") {
+        if !xdg_rt.is_empty() && Path::new(&xdg_rt).exists() {
+            bwrap_args.push("--ro-bind".to_string());
+            bwrap_args.push(xdg_rt.clone());
+            bwrap_args.push(xdg_rt);
+        }
     }
 
     // Mount shared engine, isolated loaders, and tools strictly READ-ONLY

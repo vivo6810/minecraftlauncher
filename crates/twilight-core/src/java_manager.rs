@@ -5,13 +5,32 @@ use serde::Deserialize;
 use crate::models::JavaRuntimeInfo;
 use crate::paths::LauncherPaths;
 
-/// Determines the required Java major version for any Minecraft release.
-/// - <= 1.16.5 : Java 8
-/// - 1.17.x    : Java 17 (compatible with 16+)
-/// - 1.18 - 1.20.4 : Java 17
-/// - >= 1.20.5 / 1.21.x / 26.x : Java 21
+/// Fallback Java major version heuristic when Mojang's `javaVersion.majorVersion` is absent.
+/// - `1.0` ..= `1.16.5`  -> Java 8
+/// - `1.17` ..= `1.20.4` -> Java 17
+/// - `1.20.5` ..= `1.21.x` (and `24w*` / `25w*` snapshots) -> Java 21
+/// - `26.x+` (and `26w*`+ unobfuscated drops) -> Java 25
 pub fn required_java_major_for_mc(mc_version: &str) -> u32 {
-    let parts: Vec<&str> = mc_version.split('.').collect();
+    let trimmed = mc_version.trim();
+
+    // Classic weekly snapshot format: e.g. "24w14a", "25w09b", "26w04a"
+    if let Some((yr_str, rest)) = trimmed.split_once('w') {
+        if yr_str.len() == 2 && yr_str.chars().all(|c| c.is_ascii_digit()) && !rest.is_empty() {
+            if let Ok(yr) = yr_str.parse::<u32>() {
+                return if yr >= 26 {
+                    25
+                } else if yr >= 24 {
+                    21
+                } else if yr >= 21 {
+                    17
+                } else {
+                    8
+                };
+            }
+        }
+    }
+
+    let parts: Vec<&str> = trimmed.split('.').collect();
     if parts.len() >= 2 && parts[0] == "1" {
         let minor: u32 = parts[1]
             .chars()
@@ -38,7 +57,52 @@ pub fn required_java_major_for_mc(mc_version: &str) -> u32 {
             return 21;
         }
     }
-    21
+
+    // Year-based Minecraft releases (e.g. "26.1", "26.3", "26.4-pre-1")
+    if let Some(first_seg) = parts.first() {
+        let major_year: u32 = first_seg
+            .chars()
+            .take_while(|c| c.is_ascii_digit())
+            .collect::<String>()
+            .parse()
+            .unwrap_or(26);
+        if major_year >= 26 {
+            return 25;
+        }
+    }
+
+    25
+}
+
+#[derive(Debug, Deserialize)]
+struct AdoptiumAvailableReleases {
+    available_lts_releases: Vec<u32>,
+    most_recent_feature_release: Option<u32>,
+}
+
+/// Queries Adoptium for supported Java major versions (always including 8, 17, 21, 25 plus any newer LTS/feature releases).
+pub async fn fetch_available_java_majors(client: &reqwest::Client) -> Vec<u32> {
+    let mut majors = vec![8_u32, 17, 21, 25];
+    if let Ok(resp) = client
+        .get("https://api.adoptium.net/v3/info/available_releases")
+        .send()
+        .await
+    {
+        if let Ok(info) = resp.json::<AdoptiumAvailableReleases>().await {
+            for lts in info.available_lts_releases {
+                if lts >= 8 && lts != 11 && !majors.contains(&lts) {
+                    majors.push(lts);
+                }
+            }
+            if let Some(feat) = info.most_recent_feature_release {
+                if feat > 25 && !majors.contains(&feat) {
+                    majors.push(feat);
+                }
+            }
+        }
+    }
+    majors.sort_unstable();
+    majors
 }
 
 #[derive(Debug, Deserialize)]
@@ -86,17 +150,23 @@ pub fn list_installed_portable_javas(paths: &LauncherPaths) -> Vec<JavaRuntimeIn
                     .split('-')
                     .nth(1)
                     .and_then(|n| n.parse::<u32>().ok())
-                    .unwrap_or(21);
+                    .unwrap_or(25);
+                let version_label = std::fs::read_to_string(folder.join(".semver"))
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or(dir_name);
                 list.push(JavaRuntimeInfo {
                     major_version: major,
                     vendor: "Eclipse Temurin (Portable)".to_string(),
-                    version_string: dir_name,
+                    version_string: version_label,
                     executable_path: exe.to_string_lossy().to_string(),
                     managed_portable: true,
                 });
             }
         }
     }
+    list.sort_by_key(|j| j.major_version);
     list
 }
 
@@ -115,7 +185,7 @@ fn find_java_executable_in_dir(dir: &Path) -> Option<PathBuf> {
 }
 
 /// Ensures an isolated portable OpenJDK runtime (`shared/java/temurin-{major}`) exists
-/// for the requested Java major version (8, 17, or 21), downloading from Adoptium if needed.
+/// for the requested Java major version (8, 17, 21, 25, or newer), downloading from Adoptium if needed.
 pub async fn ensure_portable_java(
     client: &reqwest::Client,
     paths: &LauncherPaths,
@@ -125,10 +195,15 @@ pub async fn ensure_portable_java(
         .shared_java_dir()
         .join(format!("temurin-{major_version}"));
     if let Some(existing_exe) = find_java_executable_in_dir(&target_dir) {
+        let version_label = std::fs::read_to_string(target_dir.join(".semver"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| format!("temurin-{major_version}"));
         return Ok(JavaRuntimeInfo {
             major_version,
             vendor: "Eclipse Temurin (Portable)".to_string(),
-            version_string: format!("temurin-{major_version}"),
+            version_string: version_label,
             executable_path: existing_exe.to_string_lossy().to_string(),
             managed_portable: true,
         });
@@ -147,22 +222,27 @@ pub async fn ensure_portable_java(
         "x64"
     };
 
-    let api_url = format!(
-        "https://api.adoptium.net/v3/assets/latest/{major_version}/hotspot?architecture={adoptium_arch}&image_type=jre&os={adoptium_os}&vendor=eclipse"
-    );
+    // Prefer JRE for lightweight footprint; fall back to JDK if Adoptium only published JDK builds for a brand-new release
+    let mut selected_asset: Option<AdoptiumAsset> = None;
+    for image_type in ["jre", "jdk"] {
+        let api_url = format!(
+            "https://api.adoptium.net/v3/assets/latest/{major_version}/hotspot?architecture={adoptium_arch}&image_type={image_type}&os={adoptium_os}&vendor=eclipse"
+        );
+        if let Ok(resp) = client.get(&api_url).send().await {
+            if resp.status().is_success() {
+                if let Ok(mut assets) = resp.json::<Vec<AdoptiumAsset>>().await {
+                    if !assets.is_empty() {
+                        selected_asset = Some(assets.swap_remove(0));
+                        break;
+                    }
+                }
+            }
+        }
+    }
 
-    let assets: Vec<AdoptiumAsset> = client
-        .get(&api_url)
-        .send()
-        .await
-        .context("Failed querying Adoptium portable JRE API")?
-        .error_for_status()?
-        .json()
-        .await?;
-
-    let first = assets
-        .first()
-        .with_context(|| format!("No portable OpenJDK {major_version} found for {adoptium_os}/{adoptium_arch}"))?;
+    let first = selected_asset.with_context(|| {
+        format!("No portable OpenJDK {major_version} found for {adoptium_os}/{adoptium_arch}")
+    })?;
 
     tokio::fs::create_dir_all(&target_dir).await?;
     let archive_bytes = client
@@ -191,7 +271,7 @@ pub async fn ensure_portable_java(
     .await??;
 
     let exe = find_java_executable_in_dir(&target_dir)
-        .context("Extracted portable JRE archive did not contain bin/java")?;
+        .context("Extracted portable OpenJDK archive did not contain bin/java")?;
 
     #[cfg(unix)]
     {
@@ -201,10 +281,12 @@ pub async fn ensure_portable_java(
         std::fs::set_permissions(&exe, perms)?;
     }
 
+    let _ = std::fs::write(target_dir.join(".semver"), &first.version.semver);
+
     Ok(JavaRuntimeInfo {
         major_version,
         vendor: "Eclipse Temurin (Portable)".to_string(),
-        version_string: first.version.semver.clone(),
+        version_string: first.version.semver,
         executable_path: exe.to_string_lossy().to_string(),
         managed_portable: true,
     })

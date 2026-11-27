@@ -6,9 +6,9 @@ members = [
 ]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 authors = ["vivo6810"]
 repository = "https://github.com/vivo6810/minecraftlauncher"
 

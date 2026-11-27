@@ -190,22 +190,28 @@ pub async fn install_content_into_profile(
             .or_else(|| chosen.files.first())
             .context("Modrinth version has no downloadable files")?;
 
+        let safe_filename = std::path::Path::new(&file.filename)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .context("Invalid Modrinth filename")?
+            .to_string();
+
         match kind {
             ModrinthContentKind::Mod => {
-                let dest = profile_dir.join("mods").join(&file.filename);
+                let dest = profile_dir.join("mods").join(&safe_filename);
                 download_verified_batch(
                     client,
                     vec![DownloadTask {
                         url: file.url.clone(),
                         destination: dest,
                         expected_sha1: file.hashes.sha1.clone(),
-                        label: file.filename.clone(),
+                        label: safe_filename.clone(),
                     }],
                     1,
                     |_, _, _| {},
                 )
                 .await?;
-                installed_files.push(file.filename.clone());
+                installed_files.push(safe_filename);
 
                 for dep in &chosen.dependencies {
                     if dep.dependency_type == "required" {
@@ -216,49 +222,49 @@ pub async fn install_content_into_profile(
                 }
             }
             ModrinthContentKind::Resourcepack => {
-                let dest = profile_dir.join("resourcepacks").join(&file.filename);
+                let dest = profile_dir.join("resourcepacks").join(&safe_filename);
                 download_verified_batch(
                     client,
                     vec![DownloadTask {
                         url: file.url.clone(),
                         destination: dest,
                         expected_sha1: file.hashes.sha1.clone(),
-                        label: file.filename.clone(),
+                        label: safe_filename.clone(),
                     }],
                     1,
                     |_, _, _| {},
                 )
                 .await?;
-                installed_files.push(file.filename.clone());
+                installed_files.push(safe_filename);
             }
             ModrinthContentKind::Shader => {
-                let dest = profile_dir.join("shaderpacks").join(&file.filename);
+                let dest = profile_dir.join("shaderpacks").join(&safe_filename);
                 download_verified_batch(
                     client,
                     vec![DownloadTask {
                         url: file.url.clone(),
                         destination: dest,
                         expected_sha1: file.hashes.sha1.clone(),
-                        label: file.filename.clone(),
+                        label: safe_filename.clone(),
                     }],
                     1,
                     |_, _, _| {},
                 )
                 .await?;
-                installed_files.push(file.filename.clone());
+                installed_files.push(safe_filename);
             }
             ModrinthContentKind::Datapack => {
                 let target = datapack_target
                     .clone()
                     .unwrap_or(DatapackInstallTarget::AllWorlds);
-                let staging_file = profile_dir.join("datapacks_global").join(&file.filename);
+                let staging_file = profile_dir.join("datapacks_global").join(&safe_filename);
                 download_verified_batch(
                     client,
                     vec![DownloadTask {
                         url: file.url.clone(),
                         destination: staging_file.clone(),
                         expected_sha1: file.hashes.sha1.clone(),
-                        label: file.filename.clone(),
+                        label: safe_filename.clone(),
                     }],
                     1,
                     |_, _, _| {},
@@ -271,15 +277,18 @@ pub async fn install_content_into_profile(
                     }
                     DatapackInstallTarget::SpecificWorlds(worlds) => {
                         for world in worlds {
-                            let world_dp = profile_dir.join("saves").join(world).join("datapacks");
+                            let safe_world = std::path::Path::new(&world)
+                                .file_name()
+                                .context("Invalid world folder name")?;
+                            let world_dp = profile_dir.join("saves").join(safe_world).join("datapacks");
                             std::fs::create_dir_all(&world_dp)?;
-                            std::fs::copy(&staging_file, world_dp.join(&file.filename))?;
+                            std::fs::copy(&staging_file, world_dp.join(&safe_filename))?;
                         }
                         // Remove from global staging if it was strictly per-world
                         let _ = std::fs::remove_file(&staging_file);
                     }
                 }
-                installed_files.push(file.filename.clone());
+                installed_files.push(safe_filename);
             }
             ModrinthContentKind::Modpack => {
                 anyhow::bail!("Use install_modpack_as_new_profile for .mrpack modpacks");
@@ -356,7 +365,7 @@ pub async fn install_modpack_as_new_profile(
         .await?;
 
     let profile_id = uuid::Uuid::new_v4().to_string();
-    let profile_dir = paths.ensure_profile_layout(&profile_id)?;
+    paths.ensure_profile_layout(&profile_id)?;
 
     let cursor = std::io::Cursor::new(archive_bytes);
     let mut zip_arch = zip::ZipArchive::new(cursor)?;
@@ -378,10 +387,12 @@ pub async fn install_modpack_as_new_profile(
             .strip_prefix("overrides/")
             .or_else(|| entry_name.strip_prefix("client-overrides/"));
         if let Some(clean_rel) = rel {
-            if clean_rel.is_empty() || clean_rel.contains("..") {
+            if clean_rel.is_empty() {
                 continue;
             }
-            let out_path = profile_dir.join(clean_rel);
+            let Ok(out_path) = paths.resolve_inside_profile(&profile_id, clean_rel) else {
+                continue;
+            };
             if entry.is_dir() {
                 std::fs::create_dir_all(&out_path)?;
             } else {
@@ -414,13 +425,13 @@ pub async fn install_modpack_as_new_profile(
 
     let mut tasks = Vec::new();
     for item in index.files {
-        if item.path.contains("..") {
+        let Ok(dest) = paths.resolve_inside_profile(&profile_id, &item.path) else {
             continue;
-        }
+        };
         if let Some(url) = item.downloads.first() {
             tasks.push(DownloadTask {
                 url: url.clone(),
-                destination: profile_dir.join(&item.path),
+                destination: dest,
                 expected_sha1: item.hashes.sha1,
                 label: item.path,
             });

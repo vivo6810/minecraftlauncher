@@ -65,30 +65,47 @@ where
     // 2. Sync global "All Worlds" datapacks into any newly created world folders
     let _ = sync_global_datapacks_to_worlds(&profile_dir);
 
-    // 3. Ensure Automatic Portable Java Runtime
-    let required_java = required_java_major_for_mc(&profile.mc_version);
-    on_progress(
-        format!("Verifying Portable OpenJDK {required_java}..."),
-        0.12,
-    );
-    let java_rt = ensure_portable_java(client, paths, required_java).await?;
-
-    // 4. Auto-update / resolve Mod Loader version if configured
-    on_progress("Checking Mod Loader metadata...".to_string(), 0.20);
+    // 3. Auto-update / resolve Mod Loader version if configured
+    on_progress("Checking Mod Loader metadata...".to_string(), 0.12);
     let resolved_loader_ver = resolve_and_auto_update_loader_version(client, profile).await?;
 
-    // 5. Verify Shared Pure Vanilla Engine (`shared/vanilla/` + `shared/assets/`)
+    // 4. Verify Shared Pure Vanilla Engine (`shared/vanilla/` + `shared/assets/`) first
+    // so we read Mojang's exact `javaVersion.majorVersion` (e.g. Java 25 for MC 26.x+)
     let (vanilla_detail, vanilla_cp) = prepare_shared_vanilla_engine(
         client,
         paths,
         &profile.mc_version,
         settings.concurrent_downloads,
         |done, total, label| {
-            let pct = 0.22 + 0.55 * (done as f32 / total.max(1) as f32);
+            let pct = 0.15 + 0.55 * (done as f32 / total.max(1) as f32);
             on_progress(format!("Verifying {label} ({done}/{total})"), pct);
         },
     )
     .await?;
+
+    // 5. Ensure Automatic Portable Java Runtime matching Mojang's `javaVersion.majorVersion` (8 / 17 / 21 / 25+),
+    // falling back to `required_java_major_for_mc` if an older metadata runtime (e.g. Java 16 on macOS/aarch64 for 1.17.1) is unavailable
+    let fallback_java = required_java_major_for_mc(&profile.mc_version);
+    let primary_java = vanilla_detail
+        .java_version
+        .as_ref()
+        .map(|jv| jv.major_version)
+        .unwrap_or(fallback_java);
+    on_progress(
+        format!("Verifying Portable OpenJDK {primary_java}..."),
+        0.74,
+    );
+    let java_rt = match ensure_portable_java(client, paths, primary_java).await {
+        Ok(rt) => rt,
+        Err(_) if fallback_java != primary_java => {
+            on_progress(
+                format!("Falling back to Portable OpenJDK {fallback_java}..."),
+                0.76,
+            );
+            ensure_portable_java(client, paths, fallback_java).await?
+        }
+        Err(err) => return Err(err),
+    };
 
     // 6. Prepare Isolated Mod Loader JARs (`loaders/<loader>/...`)
     let mut main_class = vanilla_detail.main_class.clone();

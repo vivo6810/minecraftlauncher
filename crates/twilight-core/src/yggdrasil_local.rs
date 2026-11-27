@@ -159,17 +159,25 @@ pub async fn spawn_local_yggdrasil_skin_server(
                     let _ = write_json_response(&mut stream, &profile_resp.to_string()).await;
                 } else if let Some(rest) = path.strip_prefix("/textures/skin/") {
                     let hash = rest.trim_end_matches(".png");
-                    let file_path = paths_ref.wardrobe_skins_dir().join(format!("{hash}.png"));
-                    if let Ok(bytes) = tokio::fs::read(file_path).await {
-                        let _ = write_png_response(&mut stream, &bytes).await;
+                    if !hash.is_empty() && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                        let file_path = paths_ref.wardrobe_skins_dir().join(format!("{hash}.png"));
+                        if let Ok(bytes) = tokio::fs::read(file_path).await {
+                            let _ = write_png_response(&mut stream, &bytes).await;
+                        } else {
+                            let _ = write_not_found(&mut stream).await;
+                        }
                     } else {
                         let _ = write_not_found(&mut stream).await;
                     }
                 } else if let Some(rest) = path.strip_prefix("/textures/cape/") {
                     let hash = rest.trim_end_matches(".png");
-                    let file_path = paths_ref.wardrobe_capes_dir().join(format!("{hash}.png"));
-                    if let Ok(bytes) = tokio::fs::read(file_path).await {
-                        let _ = write_png_response(&mut stream, &bytes).await;
+                    if !hash.is_empty() && hash.chars().all(|c| c.is_ascii_hexdigit()) {
+                        let file_path = paths_ref.wardrobe_capes_dir().join(format!("{hash}.png"));
+                        if let Ok(bytes) = tokio::fs::read(file_path).await {
+                            let _ = write_png_response(&mut stream, &bytes).await;
+                        } else {
+                            let _ = write_not_found(&mut stream).await;
+                        }
                     } else {
                         let _ = write_not_found(&mut stream).await;
                     }

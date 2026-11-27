@@ -30,6 +30,10 @@ export function isTauriDesktop(): boolean {
 const STORAGE_KEY = "twilight_launcher_web_state_v1";
 const VFS_KEY = "twilight_launcher_web_vfs_v1";
 
+function migrateLegacyWebStorageIfNeeded(): void {
+  // Keep original v1 storage keys intact so existing web-preview profiles & VFS edits persist seamlessly
+}
+
 function makeMonotoneScreenshotSvgDataUrl(title: string, seed: number): string {
   const shadeA = seed % 2 === 0 ? "#121216" : "#18181e";
   const shadeB = seed % 2 === 0 ? "#e4e4e7" : "#d4d4d8";
@@ -55,49 +59,6 @@ function makeMonotoneScreenshotSvgDataUrl(title: string, seed: number): string {
   return `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`;
 }
 
-function makeSampleSkinPngDataUrl(primary = "#fafafa", secondary = "#27272a"): string {
-  if (typeof document === "undefined") return "";
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 64;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-  ctx.fillStyle = secondary;
-  ctx.fillRect(0, 0, 64, 64);
-  // Head front (8,8,8,8)
-  ctx.fillStyle = primary;
-  ctx.fillRect(8, 8, 8, 8);
-  // Eyes
-  ctx.fillStyle = "#09090b";
-  ctx.fillRect(9, 12, 2, 2);
-  ctx.fillRect(13, 12, 2, 2);
-  // Torso & limbs
-  ctx.fillStyle = "#d4d4d8";
-  ctx.fillRect(20, 20, 8, 12);
-  ctx.fillStyle = "#52525b";
-  ctx.fillRect(44, 20, 4, 12);
-  ctx.fillRect(4, 20, 4, 12);
-  return canvas.toDataURL("image/png");
-}
-
-function makeSampleCapePngDataUrl(): string {
-  if (typeof document === "undefined") return "";
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 32;
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return "";
-  ctx.fillStyle = "#141418";
-  ctx.fillRect(0, 0, 64, 32);
-  ctx.fillStyle = "#fafafa";
-  ctx.fillRect(1, 1, 10, 16);
-  ctx.fillStyle = "#18181b";
-  ctx.fillRect(2, 2, 8, 14);
-  ctx.fillStyle = "#fafafa";
-  ctx.fillRect(4, 5, 4, 4);
-  return canvas.toDataURL("image/png");
-}
-
 interface WebVfsEntry {
   isDir: boolean;
   content?: string;
@@ -108,6 +69,7 @@ interface WebVfsEntry {
 type WebVfsMap = Record<string, Record<string, WebVfsEntry>>;
 
 function loadWebVfs(profiles: Profile[]): WebVfsMap {
+  migrateLegacyWebStorageIfNeeded();
   try {
     const raw = localStorage.getItem(VFS_KEY);
     if (raw) return JSON.parse(raw);
@@ -170,16 +132,13 @@ function saveWebVfs(vfs: WebVfsMap) {
 }
 
 function getInitialWebState(): LauncherStateSnapshot {
+  migrateLegacyWebStorageIfNeeded();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch {
     // ignore
   }
-
-  const sampleSkin = makeSampleSkinPngDataUrl("#fafafa", "#1f1f24");
-  const sampleSkinAlt = makeSampleSkinPngDataUrl("#d4d4d8", "#09090b");
-  const sampleCape = makeSampleCapePngDataUrl();
 
   const initial: LauncherStateSnapshot = {
     settings: {
@@ -208,105 +167,23 @@ function getInitialWebState(): LauncherStateSnapshot {
         block_high_risk_jars: true,
       },
     },
-    profiles: [
-      {
-        id: "vanilla-latest",
-        name: "Vanilla Crisp",
-        icon: "cube",
-        banner_screenshot: null,
-        mc_version: "1.21.4",
-        loader: "none", // Spec default: None
-        loader_version: "latest", // Spec default: Latest
-        auto_update_loader: true,
-        allocated_ram_mb: 4096,
-        fullscreen_override: null,
-        sandbox_override: null,
-        custom_jvm_args: [],
-        created_at: new Date().toISOString(),
-        last_played: new Date().toISOString(),
-        total_playtime_secs: 8420,
-        linked_modpack_id: null,
-      },
-      {
-        id: "fabric-shaders",
-        name: "Monolith Shaders",
-        icon: "sparkles",
-        banner_screenshot: null,
-        mc_version: "1.21.4",
-        loader: "fabric",
-        loader_version: "0.16.10",
-        auto_update_loader: true,
-        allocated_ram_mb: 6144,
-        fullscreen_override: null,
-        sandbox_override: null,
-        custom_jvm_args: [],
-        created_at: new Date().toISOString(),
-        last_played: null,
-        total_playtime_secs: 3120,
-        linked_modpack_id: null,
-      },
-    ],
+    profiles: [],
     accounts: [
       {
         id: "offline-1",
-        username: "TwilightRogue",
+        username: "Player",
         uuid: "e41f8b1c-4d23-3910-811a-9f88e72a1102",
         account_type: "offline",
         active: true,
-        skin_sha256: "sha256-monolith-classic",
+        skin_sha256: null,
         skin_variant: "classic",
-        custom_cape_sha256: "sha256-eclipse-cape",
+        custom_cape_sha256: null,
         official_cape_id: null,
         official_capes: [],
         external_yggdrasil_url: null,
       },
-      {
-        id: "msa-premium-1",
-        username: "VivoPrime",
-        uuid: "5a88c991-0e12-4c9a-9f81-1182c7d40a99",
-        account_type: "microsoft",
-        active: false,
-        skin_sha256: "sha256-ivory-slim",
-        skin_variant: "slim",
-        custom_cape_sha256: null,
-        official_cape_id: "migrator-cape",
-        official_capes: [
-          { id: "migrator-cape", alias: "Migrator", url: sampleCape, state: "ACTIVE" },
-          { id: "vanilla-cape", alias: "Vanilla", url: sampleCape, state: "INACTIVE" },
-          { id: "cherry-blossom", alias: "Cherry Blossom", url: sampleCape, state: "INACTIVE" },
-        ],
-        external_yggdrasil_url: null,
-      },
     ],
-    wardrobe: [
-      {
-        sha256: "sha256-monolith-classic",
-        name: "Obsidian Wanderer",
-        kind: "skin",
-        variant: "classic",
-        file_name: "obsidian_wanderer.png",
-        added_at: new Date().toISOString(),
-        preview_data_url: sampleSkin,
-      },
-      {
-        sha256: "sha256-ivory-slim",
-        name: "Ivory Phantom",
-        kind: "skin",
-        variant: "slim",
-        file_name: "ivory_phantom.png",
-        added_at: new Date().toISOString(),
-        preview_data_url: sampleSkinAlt,
-      },
-      {
-        sha256: "sha256-eclipse-cape",
-        name: "Twilight Eclipse Cape",
-        kind: "cape",
-        variant: "classic",
-        file_name: "twilight_eclipse_cape.png",
-        added_at: new Date().toISOString(),
-        preview_data_url: sampleCape,
-      },
-    ],
+    wardrobe: [],
   };
 
   localStorage.setItem(STORAGE_KEY, JSON.stringify(initial));
@@ -379,12 +256,14 @@ export const LauncherBridge = {
       // Fallback if preview iframe blocks external network
     }
     return {
-      latest: { release: "1.21.4", snapshot: "25w09b" },
+      latest: { release: "26.3", snapshot: "26.4-pre-1" },
       versions: [
+        { id: "26.3", type: "release", url: "", time: "", releaseTime: "2026-10-15T10:00:00Z" },
+        { id: "26.2", type: "release", url: "", time: "", releaseTime: "2026-07-10T10:00:00Z" },
+        { id: "26.1.2", type: "release", url: "", time: "", releaseTime: "2026-04-20T10:00:00Z" },
+        { id: "1.21.11", type: "release", url: "", time: "", releaseTime: "2025-12-09T10:00:00Z" },
         { id: "1.21.4", type: "release", url: "", time: "", releaseTime: "2024-12-03T10:00:00Z" },
-        { id: "1.21.3", type: "release", url: "", time: "", releaseTime: "2024-10-23T10:00:00Z" },
         { id: "1.21.1", type: "release", url: "", time: "", releaseTime: "2024-08-08T10:00:00Z" },
-        { id: "1.20.6", type: "release", url: "", time: "", releaseTime: "2024-04-29T10:00:00Z" },
         { id: "1.20.4", type: "release", url: "", time: "", releaseTime: "2023-12-07T10:00:00Z" },
         { id: "1.20.1", type: "release", url: "", time: "", releaseTime: "2023-06-12T10:00:00Z" },
         { id: "1.19.4", type: "release", url: "", time: "", releaseTime: "2023-03-14T10:00:00Z" },
@@ -392,7 +271,7 @@ export const LauncherBridge = {
         { id: "1.16.5", type: "release", url: "", time: "", releaseTime: "2021-01-15T10:00:00Z" },
         { id: "1.12.2", type: "release", url: "", time: "", releaseTime: "2017-09-18T10:00:00Z" },
         { id: "1.8.9", type: "release", url: "", time: "", releaseTime: "2015-12-09T10:00:00Z" },
-        { id: "25w09b", type: "snapshot", url: "", time: "", releaseTime: "2025-02-27T10:00:00Z" },
+        { id: "26.4-pre-1", type: "snapshot", url: "", time: "", releaseTime: "2026-11-18T10:00:00Z" },
       ],
     };
   },
@@ -402,41 +281,183 @@ export const LauncherBridge = {
     if (isTauriDesktop()) {
       return invoke("fetch_loader_versions", { loader, mcVersion });
     }
+
+    const compareSemverAsc = (a: string, b: string): number => {
+      const stripBuild = (v: string) => v.split("+")[0];
+      const splitPre = (v: string): [string, string | null] => {
+        const clean = stripBuild(v);
+        const idx = clean.indexOf("-");
+        return idx === -1 ? [clean, null] : [clean.slice(0, idx), clean.slice(idx + 1)];
+      };
+      const isDigits = (s: string) => s.length > 0 && /^\d+$/.test(s);
+
+      const [coreA, preA] = splitPre(a);
+      const [coreB, preB] = splitPre(b);
+      const segsA = coreA.split(".");
+      const segsB = coreB.split(".");
+      const maxCore = Math.max(segsA.length, segsB.length);
+      for (let i = 0; i < maxCore; i++) {
+        const sa = segsA[i] ?? "0";
+        const sb = segsB[i] ?? "0";
+        if (isDigits(sa) && isDigits(sb)) {
+          const diff = Number(sa) - Number(sb);
+          if (diff !== 0) return diff;
+        } else if (sa !== sb) {
+          return sa < sb ? -1 : 1;
+        }
+      }
+      if (preA === null && preB === null) return 0;
+      if (preA === null) return 1;
+      if (preB === null) return -1;
+
+      const idsA = preA.split(".");
+      const idsB = preB.split(".");
+      const minLen = Math.min(idsA.length, idsB.length);
+      for (let i = 0; i < minLen; i++) {
+        const ia = idsA[i];
+        const ib = idsB[i];
+        const da = isDigits(ia);
+        const db = isDigits(ib);
+        if (da && db) {
+          const diff = Number(ia) - Number(ib);
+          if (diff !== 0) return diff;
+        } else if (da !== db) {
+          return da ? -1 : 1;
+        } else if (ia !== ib) {
+          return ia < ib ? -1 : 1;
+        }
+      }
+      return idsA.length - idsB.length;
+    };
+
+    const compareDesc = (a: string, b: string): number => compareSemverAsc(b, a);
+
+    const neoforgePrefix = (mc: string): string => {
+      const base = mc.split("-")[0].trim();
+      if (base.startsWith("1.")) {
+        const rem = base.slice(2);
+        return rem.includes(".") ? `${rem}.` : `${rem}.0.`;
+      }
+      return base.split(".").length === 2 ? `${base}.0.` : `${base}.`;
+    };
+
+    const neoforgeMatchesMc = (nfVer: string, mc: string): boolean => {
+      if (!nfVer.startsWith(neoforgePrefix(mc))) return false;
+      const snapIdx = mc.indexOf("-snapshot-");
+      if (snapIdx !== -1) {
+        const snapNum = mc.slice(snapIdx + "-snapshot-".length);
+        return nfVer.endsWith(`+snapshot-${snapNum}`);
+      }
+      return !nfVer.includes("+snapshot-");
+    };
+
     try {
       if (loader === "fabric") {
         const r = await fetch(`https://meta.fabricmc.net/v2/versions/loader/${mcVersion}`);
         if (r.ok) {
           const data = await r.json();
-          return data.slice(0, 15).map((item: { loader: { version: string; stable?: boolean } }) => ({
+          return data.slice(0, 25).map((item: { loader: { version: string; stable?: boolean } }) => ({
             version: item.loader.version,
             stable: item.loader.stable ?? true,
-            loader: "fabric",
+            loader: "fabric" as const,
           }));
         }
       }
       if (loader === "quilt") {
         const r = await fetch(`https://meta.quiltmc.org/v3/versions/loader/${mcVersion}`);
         if (r.ok) {
-          const data = await r.json();
-          return data.slice(0, 15).map((item: { loader: { version: string } }) => ({
-            version: item.loader.version,
-            stable: !item.loader.version.includes("beta"),
-            loader: "quilt",
-          }));
+          const data: { loader: { version: string } }[] = await r.json();
+          return data
+            .map((item) => ({
+              version: item.loader.version,
+              stable:
+                !item.loader.version.includes("-") &&
+                !item.loader.version.includes("beta") &&
+                !item.loader.version.includes("alpha"),
+              loader: "quilt" as const,
+            }))
+            .sort((a, b) => compareDesc(a.version, b.version))
+            .slice(0, 25);
+        }
+      }
+      if (loader === "neoforge") {
+        const r = await fetch("/api-neoforge/api/maven/versions/releases/net/neoforged/neoforge");
+        if (r.ok) {
+          const data: { versions: string[] } = await r.json();
+          const matched = data.versions
+            .filter((v) => neoforgeMatchesMc(v, mcVersion))
+            .sort(compareDesc)
+            .slice(0, 25)
+            .map((v) => ({
+              version: v,
+              stable: !v.includes("-") && !v.includes("beta") && !v.includes("alpha"),
+              loader: "neoforge" as const,
+            }));
+          if (matched.length > 0) return matched;
+        }
+      }
+      if (loader === "forge") {
+        const metaRes = await fetch("/api-forge/net/minecraftforge/forge/maven-metadata.json");
+        const promos: Record<string, string> = await fetch(
+          "/api-forge/net/minecraftforge/forge/promotions_slim.json"
+        )
+          .then((r) => (r.ok ? r.json() : null))
+          .then((j) => (j && typeof j.promos === "object" && j.promos ? j.promos : {}))
+          .catch(() => ({}));
+        const rec = promos[`${mcVersion}-recommended`];
+        if (metaRes.ok) {
+          const allMap: Record<string, string[]> = await metaRes.json();
+          const rawList = allMap[mcVersion] ?? [];
+          const strip = `${mcVersion}-`;
+          const matched = rawList
+            .map((entry) => (entry.startsWith(strip) ? entry.slice(strip.length) : entry))
+            .sort(compareDesc)
+            .slice(0, 25)
+            .map((v) => ({
+              version: v,
+              stable: rec ? v === rec : !v.includes("beta"),
+              loader: "forge" as const,
+            }));
+          if (matched.length > 0) return matched;
         }
       }
     } catch {
-      // Fallback below
+      // Offline fallback below
     }
+
+    const FORGE_VERIFIED_FALLBACKS: Record<string, string[]> = {
+      "26.3": ["66.1.9", "66.1.8"],
+      "26.2": ["65.1.6", "65.1.5"],
+      "26.1.2": ["64.1.6", "64.1.5"],
+      "26.1.1": ["63.0.2"],
+      "26.1": ["62.0.9"],
+      "1.21.11": ["61.2.5", "61.2.4"],
+      "1.21.4": ["54.1.0", "54.0.18"],
+      "1.20.4": ["49.1.13"],
+      "1.20.1": ["47.3.12", "47.2.20"],
+      "1.19.4": ["45.3.7"],
+      "1.18.2": ["40.2.21"],
+      "1.16.5": ["36.2.42"],
+      "1.12.2": ["14.23.5.2860"],
+      "1.8.9": ["11.15.1.2318"],
+    };
+
+    const NEOFORGE_VERIFIED_FALLBACKS: Record<string, string[]> = {
+      "26.3": ["26.3.0.118", "26.3.0.117"],
+      "26.1.2": ["26.1.2.130", "26.1.2.129"],
+      "1.21.4": ["21.4.88-beta", "21.4.76-beta"],
+      "1.21.1": ["21.1.268", "21.1.92"],
+    };
+
     const defaults: Record<Exclude<ModLoaderKind, "none">, string[]> = {
-      fabric: ["0.16.10", "0.16.9", "0.16.7", "0.15.11"],
-      quilt: ["0.27.1", "0.26.4", "0.25.0"],
-      neoforge: ["21.4.88-beta", "21.4.76-beta", "21.1.92"],
-      forge: ["54.0.18", "47.3.12", "47.2.20"],
+      fabric: ["0.20.1", "0.20.0", "0.19.5", "0.18.4"],
+      quilt: ["0.30.2", "0.31.0-beta.6", "0.30.1", "0.29.2"],
+      neoforge: NEOFORGE_VERIFIED_FALLBACKS[mcVersion] ?? [],
+      forge: FORGE_VERIFIED_FALLBACKS[mcVersion] ?? [],
     };
     return defaults[loader].map((v, i) => ({
       version: v,
-      stable: i === 0,
+      stable: !v.includes("-") && !v.includes("beta") && (i === 0 || loader !== "forge"),
       loader,
     }));
   },
@@ -570,6 +591,23 @@ export const LauncherBridge = {
         acct.custom_cape_sha256 = sha256 || null;
       }
     }
+    saveWebState(s);
+    return s;
+  },
+
+  async removeWardrobeItem(
+    sha256: string,
+    kind: WardrobeAssetKind
+  ): Promise<LauncherStateSnapshot> {
+    if (isTauriDesktop()) {
+      return invoke("remove_wardrobe_item", { sha256, kind });
+    }
+    const s = getInitialWebState();
+    s.wardrobe = s.wardrobe.filter((w) => !(w.sha256 === sha256 && w.kind === kind));
+    s.accounts.forEach((a) => {
+      if (kind === "skin" && a.skin_sha256 === sha256) a.skin_sha256 = null;
+      if (kind === "cape" && a.custom_cape_sha256 === sha256) a.custom_cape_sha256 = null;
+    });
     saveWebState(s);
     return s;
   },
@@ -927,20 +965,55 @@ export const LauncherBridge = {
     };
   },
 
+  async listAvailableJavaMajors(): Promise<number[]> {
+    if (isTauriDesktop()) {
+      return invoke("list_available_java_majors_cmd");
+    }
+    const majors = new Set<number>([8, 17, 21, 25]);
+    try {
+      const r = await fetch("https://api.adoptium.net/v3/info/available_releases");
+      if (r.ok) {
+        const info: {
+          available_lts_releases?: number[];
+          most_recent_feature_release?: number;
+        } = await r.json();
+        for (const lts of info.available_lts_releases ?? []) {
+          if (lts >= 8 && lts !== 11) majors.add(lts);
+        }
+        if (
+          info.most_recent_feature_release &&
+          info.most_recent_feature_release > 25
+        ) {
+          majors.add(info.most_recent_feature_release);
+        }
+      }
+    } catch {
+      // Offline fallback keeps 8, 17, 21, 25
+    }
+    return Array.from(majors).sort((a, b) => a - b);
+  },
+
   async listPortableJavas(): Promise<JavaRuntimeInfo[]> {
     if (isTauriDesktop()) return invoke("list_portable_javas_cmd");
     return [
       {
+        major_version: 25,
+        vendor: "Eclipse Temurin (Portable)",
+        version_string: "25.0.5+10-jre",
+        executable_path: "shared/java/temurin-25/bin/java",
+        managed_portable: true,
+      },
+      {
         major_version: 21,
         vendor: "Eclipse Temurin (Portable)",
-        version_string: "21.0.5+11-jre",
+        version_string: "21.0.9+11-jre",
         executable_path: "shared/java/temurin-21/bin/java",
         managed_portable: true,
       },
       {
         major_version: 17,
         vendor: "Eclipse Temurin (Portable)",
-        version_string: "17.0.13+11-jre",
+        version_string: "17.0.17+10-jre",
         executable_path: "shared/java/temurin-17/bin/java",
         managed_portable: true,
       },
@@ -952,7 +1025,7 @@ export const LauncherBridge = {
     return {
       major_version: majorVersion,
       vendor: "Eclipse Temurin (Portable)",
-      version_string: `${majorVersion}.0.2-jre`,
+      version_string: `${majorVersion}.0.5-jre`,
       executable_path: `shared/java/temurin-${majorVersion}/bin/java`,
       managed_portable: true,
     };

@@ -12,7 +12,7 @@ pub mod security;
 pub mod yggdrasil_local;
 
 use anyhow::Result;
-use models::{Account, LauncherSettings, LauncherStateSnapshot, Profile};
+use models::{Account, LauncherSettings, LauncherStateSnapshot};
 use paths::LauncherPaths;
 
 pub fn load_or_init_state(paths: &LauncherPaths) -> Result<LauncherStateSnapshot> {
@@ -24,18 +24,11 @@ pub fn load_or_init_state(paths: &LauncherPaths) -> Result<LauncherStateSnapshot
         }
     }
 
-    let default_profile = Profile {
-        name: "Vanilla Latest".to_string(),
-        mc_version: "1.21.4".to_string(),
-        ..Profile::default()
-    };
-    paths.ensure_profile_layout(&default_profile.id)?;
-
-    let default_account: Account = auth::create_offline_account("TwilightPlayer");
+    let default_account: Account = auth::create_offline_account("Player");
 
     let initial = LauncherStateSnapshot {
         settings: LauncherSettings::default(),
-        profiles: vec![default_profile],
+        profiles: Vec::new(),
         accounts: vec![default_account],
         wardrobe: Vec::new(),
     };
@@ -67,10 +60,18 @@ mod tests {
 
     #[test]
     fn default_profile_uses_none_loader_and_latest_loader_version() {
-        let profile = Profile::default();
+        let profile = models::Profile::default();
         assert_eq!(profile.loader, ModLoaderKind::None);
         assert_eq!(profile.loader_version, "latest");
         assert!(profile.auto_update_loader);
+    }
+
+    #[test]
+    fn fresh_state_has_no_default_profiles() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = LauncherPaths::from_root(temp.path().to_path_buf()).unwrap();
+        let state = load_or_init_state(&paths).unwrap();
+        assert!(state.profiles.is_empty());
     }
 
     #[test]
@@ -153,5 +154,40 @@ mod tests {
 
         let fab = crash_doctor::analyze_crash_log("Mod sodium requires fabric-api 0.100.0 or later (missing)");
         assert_eq!(fab.fix_action_code.as_deref(), Some("install_fabric_api"));
+    }
+
+    #[test]
+    fn java_and_loader_version_mappings_support_mc_26_and_java_25() {
+        assert_eq!(java_manager::required_java_major_for_mc("1.16.5"), 8);
+        assert_eq!(java_manager::required_java_major_for_mc("1.20.4"), 17);
+        assert_eq!(java_manager::required_java_major_for_mc("1.21.11"), 21);
+        assert_eq!(java_manager::required_java_major_for_mc("26.1"), 25);
+        assert_eq!(java_manager::required_java_major_for_mc("26.3"), 25);
+        assert_eq!(java_manager::required_java_major_for_mc("26.4-pre-1"), 25);
+
+        assert_eq!(loaders::neoforge_version_prefix_for_mc("1.21"), "21.0.");
+        assert_eq!(loaders::neoforge_version_prefix_for_mc("1.21.4"), "21.4.");
+        assert_eq!(loaders::neoforge_version_prefix_for_mc("26.3"), "26.3.0.");
+        assert_eq!(loaders::neoforge_version_prefix_for_mc("26.1.2"), "26.1.2.");
+        assert!(loaders::neoforge_matches_mc_version(
+            "26.1.0.0-alpha.1+snapshot-1",
+            "26.1-snapshot-1"
+        ));
+        assert!(!loaders::neoforge_matches_mc_version(
+            "26.1.0.1-beta",
+            "26.1-snapshot-1"
+        ));
+
+        let mut quilt = vec![
+            "0.20.0-beta.9".to_string(),
+            "0.30.2".to_string(),
+            "0.31.0-beta.6".to_string(),
+            "0.31.0-rc.1".to_string(),
+            "0.29.1".to_string(),
+        ];
+        quilt.sort_by(|a, b| loaders::compare_loader_versions_desc(a, b));
+        assert_eq!(quilt[0], "0.31.0-rc.1");
+        assert_eq!(quilt[1], "0.31.0-beta.6");
+        assert_eq!(quilt[2], "0.30.2");
     }
 }

@@ -1,4 +1,5 @@
-import React, { useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Compass,
@@ -7,13 +8,11 @@ import {
   Layers,
   Play,
   Plus,
-  ShieldCheck,
   Sparkles,
-  User,
+  X,
 } from "lucide-react";
 import {
   ELASTIC_SPRING,
-  type Account,
   type MinecraftVersionEntry,
   type ModLoaderKind,
   type Profile,
@@ -21,33 +20,58 @@ import {
 
 interface Props {
   profiles: Profile[];
-  activeAccount: Account | undefined;
   mcVersions: MinecraftVersionEntry[];
+  versionsError?: string | null;
+  loadingVersions?: boolean;
+  onRetryVersions?: () => void;
   onLaunchProfile: (profile: Profile) => void;
   onSelectProfile: (profile: Profile, initialTab?: string) => void;
   onOpenUniversalModrinth: () => void;
-  onOpenWardrobe: () => void;
   onCreateProfile: (p: Profile) => Promise<void>;
 }
 
+const LOADERS: { id: ModLoaderKind; label: string }[] = [
+  { id: "none", label: "None" },
+  { id: "fabric", label: "Fabric" },
+  { id: "quilt", label: "Quilt" },
+  { id: "neoforge", label: "NeoForge" },
+  { id: "forge", label: "Forge" },
+];
+
 export const StartScreen: React.FC<Props> = ({
   profiles,
-  activeAccount,
   mcVersions,
+  versionsError,
+  loadingVersions,
+  onRetryVersions,
   onLaunchProfile,
   onSelectProfile,
   onOpenUniversalModrinth,
-  onOpenWardrobe,
   onCreateProfile,
 }) => {
+  const releaseVersions = useMemo(
+    () => mcVersions.filter((v) => v.type === "release").slice(0, 60),
+    [mcVersions]
+  );
   const [creating, setCreating] = useState(false);
   const [newName, setNewName] = useState("");
-  const [newVersion, setNewVersion] = useState(mcVersions[0]?.id || "1.21.4");
-  const [newLoader, setNewLoader] = useState<ModLoaderKind>("none"); // Spec default: None
+  const [newVersion, setNewVersion] = useState(releaseVersions[0]?.id ?? "");
+  const [newLoader, setNewLoader] = useState<ModLoaderKind>("none");
 
-  const primaryProfile = profiles[0];
+  useEffect(() => {
+    if (
+      releaseVersions.length > 0 &&
+      (!newVersion || !releaseVersions.some((v) => v.id === newVersion))
+    ) {
+      setNewVersion(releaseVersions[0].id);
+    }
+  }, [releaseVersions, newVersion]);
+
+  const canCreate =
+    Boolean(newVersion) && releaseVersions.some((v) => v.id === newVersion);
 
   const submitNewProfile = async () => {
+    if (!canCreate) return;
     const created: Profile = {
       id: `prof-${Date.now()}`,
       name: newName.trim() || `Minecraft ${newVersion}`,
@@ -55,7 +79,7 @@ export const StartScreen: React.FC<Props> = ({
       banner_screenshot: null,
       mc_version: newVersion,
       loader: newLoader,
-      loader_version: "latest", // Spec default: Latest
+      loader_version: "latest",
       auto_update_loader: true,
       allocated_ram_mb: 4096,
       fullscreen_override: null,
@@ -73,153 +97,83 @@ export const StartScreen: React.FC<Props> = ({
   };
 
   return (
-    <div className="space-y-6">
-      {/* Start Screen Hero Card */}
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={ELASTIC_SPRING}
-        className="relative rounded-3xl bg-surface border border-border p-6 md:p-8 overflow-hidden"
-      >
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-6">
-          <div className="space-y-3 max-w-xl">
-            <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-elevated border border-border text-[11px] font-mono text-muted">
-              <ShieldCheck className="w-3.5 h-3.5 text-fg" />
-              <span>TWILIGHT LAUNCHER v0.1.0 • RUST + TAURI v2</span>
-            </div>
+    <div className="space-y-5">
+      <div className="flex items-center justify-between gap-3">
+        <h1 className="text-lg font-semibold tracking-tight">Profiles</h1>
 
-            <h1 className="text-2xl md:text-3xl font-bold tracking-tight">
-              Minimal. Isolated. Instant.
-            </h1>
-
-            <p className="text-xs md:text-sm text-muted leading-relaxed">
-              Launch pure Vanilla or modded instances with OS-level filesystem confinement,
-              native session token vaulting, built-in directory & config editing, and dual-mode
-              Modrinth integration.
-            </p>
-
-            <div className="flex flex-wrap items-center gap-2.5 pt-2">
-              {primaryProfile && (
-                <motion.button
-                  whileHover={{ scale: 1.04 }}
-                  whileTap={{ scale: 0.93 }}
-                  transition={ELASTIC_SPRING}
-                  onClick={() => onLaunchProfile(primaryProfile)}
-                  className="inline-flex items-center gap-2.5 px-6 py-3 rounded-2xl bg-fg text-bg text-xs font-bold tracking-wide shadow-xl"
-                >
-                  <Play className="w-4 h-4 fill-current" />
-                  <span>
-                    LAUNCH {primaryProfile.name.toUpperCase()} ({primaryProfile.mc_version})
-                  </span>
-                </motion.button>
-              )}
-
-              {/* Universal Modrinth Home Screen Button */}
-              <motion.button
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.94 }}
-                transition={ELASTIC_SPRING}
-                onClick={onOpenUniversalModrinth}
-                className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl bg-elevated border border-border text-xs font-semibold hover:border-fg/50"
-              >
-                <Compass className="w-4 h-4" />
-                <span>Open Modrinth</span>
-              </motion.button>
-
-              <motion.button
-                whileHover={{ scale: 1.03 }}
-                whileTap={{ scale: 0.94 }}
-                transition={ELASTIC_SPRING}
-                onClick={onOpenWardrobe}
-                className="inline-flex items-center gap-2 px-4 py-3 rounded-2xl bg-elevated border border-border text-xs font-medium text-muted hover:text-fg"
-              >
-                <User className="w-4 h-4" />
-                <span>
-                  {activeAccount
-                    ? `${activeAccount.username} (${
-                        activeAccount.account_type === "microsoft" ? "Premium" : "Offline"
-                      })`
-                    : "Accounts"}
-                </span>
-              </motion.button>
-            </div>
-          </div>
-
-          {/* Quick Architecture Telemetry Card */}
-          <div className="p-4 rounded-2xl bg-elevated/70 border border-border min-w-[240px] space-y-2.5 text-xs">
-            <div className="font-mono text-[11px] text-muted uppercase">Active Defaults</div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted">On Launch</span>
-              <span className="font-mono font-semibold">Minimize</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted">Auto-Fullscreen</span>
-              <span className="font-mono font-semibold">OFF</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted">Default Loader</span>
-              <span className="font-mono font-semibold">None (Latest)</span>
-            </div>
-            <div className="flex items-center justify-between">
-              <span className="text-muted">Command Palette</span>
-              <kbd className="font-mono px-2 py-0.5 rounded bg-surface border border-border text-[10px]">
-                Ctrl + K
-              </kbd>
-            </div>
-          </div>
-        </div>
-      </motion.div>
-
-      {/* Profiles Grid */}
-      <div className="space-y-3">
-        <div className="flex items-center justify-between">
-          <div>
-            <h2 className="text-sm font-semibold tracking-tight">
-              Profiles ({profiles.length})
-            </h2>
-            <p className="text-xs text-muted">
-              Each profile owns a completely standalone folder with its own File Explorer,
-              Screenshots, Mods, and Configs.
-            </p>
-          </div>
+        <div className="flex items-center gap-2">
+          <motion.button
+            type="button"
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.94 }}
+            transition={ELASTIC_SPRING}
+            onClick={onOpenUniversalModrinth}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-surface border border-border text-xs font-medium hover:border-fg/40"
+          >
+            <Compass className="w-3.5 h-3.5" /> Modrinth
+          </motion.button>
 
           <motion.button
-            whileHover={{ scale: 1.04 }}
-            whileTap={{ scale: 0.93 }}
+            type="button"
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.94 }}
+            transition={ELASTIC_SPRING}
             onClick={() => setCreating(true)}
             className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-fg text-bg text-xs font-semibold"
           >
             <Plus className="w-3.5 h-3.5" /> New Profile
           </motion.button>
         </div>
+      </div>
 
+      {profiles.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border bg-surface/40 py-20 px-6 flex flex-col items-center justify-center gap-4 text-center">
+          <span className="text-sm font-medium text-muted">No profiles yet</span>
+          <div className="flex items-center gap-2.5">
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.94 }}
+              onClick={() => setCreating(true)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-fg text-bg text-xs font-semibold"
+            >
+              <Plus className="w-3.5 h-3.5" /> New Profile
+            </motion.button>
+            <motion.button
+              type="button"
+              whileHover={{ scale: 1.03 }}
+              whileTap={{ scale: 0.94 }}
+              onClick={onOpenUniversalModrinth}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-surface border border-border text-xs font-medium"
+            >
+              <Compass className="w-3.5 h-3.5" /> Modrinth
+            </motion.button>
+          </div>
+        </div>
+      ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {profiles.map((prof) => (
             <motion.div
               key={prof.id}
               layout
-              whileHover={{ y: -3 }}
+              whileHover={{ y: -2 }}
               transition={ELASTIC_SPRING}
               onClick={() => onSelectProfile(prof, "overview")}
-              className="cursor-pointer group rounded-2xl bg-surface border border-border p-4 flex flex-col justify-between gap-4 hover:border-fg/40 transition-colors"
+              className="cursor-pointer rounded-2xl bg-surface border border-border p-4 flex flex-col justify-between gap-4 hover:border-fg/40 transition-colors"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-10 h-10 rounded-xl bg-elevated border border-border flex items-center justify-center shrink-0">
-                    {prof.loader === "none" ? (
-                      <Layers className="w-4 h-4 text-fg" />
-                    ) : (
-                      <Sparkles className="w-4 h-4 text-fg" />
-                    )}
-                  </div>
-                  <div className="min-w-0">
-                    <h3 className="text-sm font-semibold truncate">{prof.name}</h3>
-                    <div className="text-[11px] font-mono text-muted">
-                      MC {prof.mc_version} •{" "}
-                      {prof.loader === "none"
-                        ? "Vanilla"
-                        : `${prof.loader} (${prof.loader_version})`}
-                    </div>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-xl bg-elevated border border-border flex items-center justify-center shrink-0">
+                  {prof.loader === "none" ? (
+                    <Layers className="w-4 h-4 text-fg" />
+                  ) : (
+                    <Sparkles className="w-4 h-4 text-fg" />
+                  )}
+                </div>
+                <div className="min-w-0">
+                  <h3 className="text-sm font-semibold truncate">{prof.name}</h3>
+                  <div className="text-[11px] font-mono text-muted">
+                    {prof.mc_version} •{" "}
+                    {prof.loader === "none" ? "Vanilla" : prof.loader}
                   </div>
                 </div>
               </div>
@@ -228,34 +182,34 @@ export const StartScreen: React.FC<Props> = ({
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
+                    aria-label="Files"
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelectProfile(prof, "files");
                     }}
                     className="p-2 rounded-xl bg-elevated border border-border text-muted hover:text-fg"
-                    title="Open In-Profile File Explorer"
                   >
                     <FolderOpen className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
+                    aria-label="Screenshots"
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelectProfile(prof, "screenshots");
                     }}
                     className="p-2 rounded-xl bg-elevated border border-border text-muted hover:text-fg"
-                    title="Profile Screenshots"
                   >
                     <ImageIcon className="w-3.5 h-3.5" />
                   </button>
                   <button
                     type="button"
+                    aria-label="Modrinth"
                     onClick={(e) => {
                       e.stopPropagation();
                       onSelectProfile(prof, "modrinth");
                     }}
                     className="p-2 rounded-xl bg-elevated border border-border text-muted hover:text-fg"
-                    title="Profile Modrinth"
                   >
                     <Compass className="w-3.5 h-3.5" />
                   </button>
@@ -263,118 +217,143 @@ export const StartScreen: React.FC<Props> = ({
 
                 <motion.button
                   type="button"
-                  whileHover={{ scale: 1.05 }}
-                  whileTap={{ scale: 0.92 }}
+                  whileHover={{ scale: 1.04 }}
+                  whileTap={{ scale: 0.93 }}
                   onClick={(e) => {
                     e.stopPropagation();
                     onLaunchProfile(prof);
                   }}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl bg-fg text-bg text-xs font-semibold"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-fg text-bg text-xs font-semibold"
                 >
-                  <Play className="w-3 h-3 fill-current" /> Play
+                  <Play className="w-3.5 h-3.5 fill-current" /> Play
                 </motion.button>
               </div>
             </motion.div>
           ))}
         </div>
-      </div>
+      )}
 
-      {/* Create New Profile Elastic Modal */}
-      <AnimatePresence>
-        {creating && (
-          <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            onClick={() => setCreating(false)}
-            className="fixed inset-0 z-50 bg-black/65 backdrop-blur-sm flex items-center justify-center p-4"
-          >
-            <motion.div
-              initial={{ scale: 0.9, opacity: 0, y: 12 }}
-              animate={{ scale: 1, opacity: 1, y: 0 }}
-              exit={{ scale: 0.93, opacity: 0, y: 8 }}
-              transition={ELASTIC_SPRING}
-              onClick={(e) => e.stopPropagation()}
-              className="w-full max-w-md rounded-2xl bg-surface border border-border p-5 space-y-4 shadow-2xl"
-            >
-              <div>
-                <h3 className="text-sm font-semibold">Create New Isolated Profile</h3>
-                <p className="text-xs text-muted">
-                  Defaults to Mod Loader: None (Vanilla) & Latest loader build when enabled.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs text-muted">Profile Name</label>
-                <input
-                  autoFocus
-                  value={newName}
-                  onChange={(e) => setNewName(e.target.value)}
-                  placeholder="e.g. Survival 1.21.4"
-                  className="w-full px-3.5 py-2 rounded-xl bg-elevated border border-border text-xs"
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <label className="text-xs text-muted">Minecraft Version</label>
-                <select
-                  value={newVersion}
-                  onChange={(e) => setNewVersion(e.target.value)}
-                  className="w-full px-3.5 py-2 rounded-xl bg-elevated border border-border text-xs font-mono"
+      {typeof document !== "undefined" &&
+        createPortal(
+          <AnimatePresence>
+            {creating && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                onClick={() => setCreating(false)}
+                className="fixed inset-0 z-[100] bg-black/65 backdrop-blur-md flex items-center justify-center p-4"
+              >
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.92, y: 12 }}
+                  animate={{ opacity: 1, scale: 1, y: 0 }}
+                  exit={{ opacity: 0, scale: 0.94, y: 8 }}
+                  transition={ELASTIC_SPRING}
+                  onClick={(e) => e.stopPropagation()}
+                  className="w-full max-w-md bg-surface border border-border rounded-2xl p-5 shadow-2xl space-y-4"
                 >
-                  {mcVersions
-                    .filter((v) => v.type === "release")
-                    .slice(0, 40)
-                    .map((v) => (
-                      <option key={v.id} value={v.id}>
-                        {v.id}
-                      </option>
-                    ))}
-                </select>
-              </div>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-sm font-semibold">New Profile</h3>
+                    <button
+                      type="button"
+                      aria-label="Close"
+                      onClick={() => setCreating(false)}
+                      className="p-1 rounded-lg text-muted hover:text-fg"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  </div>
 
-              <div className="space-y-1.5">
-                <label className="text-xs text-muted">Mod Loader (Default: None)</label>
-                <div className="grid grid-cols-5 gap-1.5">
-                  {(["none", "fabric", "quilt", "neoforge", "forge"] as ModLoaderKind[]).map(
-                    (l) => (
-                      <button
-                        key={l}
-                        type="button"
-                        onClick={() => setNewLoader(l)}
-                        className={`py-2 rounded-xl text-xs font-medium border capitalize ${
-                          newLoader === l
-                            ? "bg-fg text-bg border-fg"
-                            : "bg-elevated border-border text-muted"
-                        }`}
+                  <div className="space-y-3">
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted">Name</label>
+                      <input
+                        autoFocus
+                        value={newName}
+                        onChange={(e) => setNewName(e.target.value)}
+                        placeholder={`Minecraft ${newVersion}`}
+                        className="w-full px-3.5 py-2 rounded-xl bg-elevated border border-border text-xs text-fg focus:outline-none focus:border-fg"
+                      />
+                    </div>
+
+                    <div className="space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <label className="text-xs text-muted">Version</label>
+                        {(versionsError || releaseVersions.length === 0) &&
+                          onRetryVersions && (
+                            <button
+                              type="button"
+                              disabled={Boolean(loadingVersions)}
+                              onClick={onRetryVersions}
+                              className="text-[11px] font-medium text-fg underline disabled:opacity-50"
+                            >
+                              {loadingVersions ? "Loading..." : "Retry"}
+                            </button>
+                          )}
+                      </div>
+                      {versionsError && (
+                        <div className="text-[11px] text-muted truncate">
+                          Failed to load versions
+                        </div>
+                      )}
+                      <select
+                        value={newVersion}
+                        disabled={releaseVersions.length === 0}
+                        onChange={(e) => setNewVersion(e.target.value)}
+                        className="w-full px-3.5 py-2 rounded-xl bg-elevated border border-border text-xs font-mono text-fg focus:outline-none disabled:opacity-50"
                       >
-                        {l}
-                      </button>
-                    )
-                  )}
-                </div>
-              </div>
+                        {releaseVersions.map((v) => (
+                          <option key={v.id} value={v.id}>
+                            {v.id}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
 
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setCreating(false)}
-                  className="px-3.5 py-2 rounded-xl bg-elevated text-xs"
-                >
-                  Cancel
-                </button>
-                <motion.button
-                  whileTap={{ scale: 0.94 }}
-                  onClick={submitNewProfile}
-                  className="px-4 py-2 rounded-xl bg-fg text-bg text-xs font-semibold"
-                >
-                  Create Profile
-                </motion.button>
-              </div>
-            </motion.div>
-          </motion.div>
+                    <div className="space-y-1">
+                      <label className="text-xs text-muted">Loader</label>
+                      <div className="grid grid-cols-5 gap-1.5">
+                        {LOADERS.map((ldr) => (
+                          <button
+                            key={ldr.id}
+                            type="button"
+                            onClick={() => setNewLoader(ldr.id)}
+                            className={`py-2 rounded-xl text-[11px] font-medium border transition-colors ${
+                              newLoader === ldr.id
+                                ? "bg-fg text-bg border-fg"
+                                : "bg-elevated border-border text-muted hover:text-fg"
+                            }`}
+                          >
+                            {ldr.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end gap-2 pt-2">
+                    <button
+                      type="button"
+                      onClick={() => setCreating(false)}
+                      className="px-3.5 py-2 rounded-xl text-xs bg-elevated text-muted hover:text-fg"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      disabled={!canCreate}
+                      onClick={() => void submitNewProfile()}
+                      className="px-4 py-2 rounded-xl text-xs font-semibold bg-fg text-bg disabled:opacity-45"
+                    >
+                      Create
+                    </button>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+          </AnimatePresence>,
+          document.body
         )}
-      </AnimatePresence>
     </div>
   );
 };
