@@ -294,6 +294,8 @@ pub struct FileNode {
     pub size_bytes: u64,
     pub modified_at: String,
     pub editable_config: bool,
+    #[serde(default)]
+    pub readable_log: bool,
     pub is_archive: bool,
 }
 

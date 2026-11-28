@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { isTauriDesktop, LauncherBridge } from "../lib/bridge";
 import type { LauncherStateSnapshot } from "../types/launcher";
+import { TitleBar } from "./TitleBar";
 
 export function AccountWelcome({ onAccount, onSkip }: {
   onAccount: (state: LauncherStateSnapshot) => void;
@@ -13,8 +14,10 @@ export function AccountWelcome({ onAccount, onSkip }: {
   const desktop = isTauriDesktop();
 
   return (
-    <div className="launcher-shell grid h-screen w-screen place-items-center overflow-auto px-5 text-fg">
-      <section className="flex w-full max-w-lg flex-col items-center gap-7 text-center">
+    <div className="launcher-shell flex h-screen w-screen flex-col overflow-hidden text-fg">
+      <TitleBar />
+      <div className="grid flex-1 min-h-0 place-items-center overflow-auto px-5">
+        <section className="flex w-full max-w-lg flex-col items-center gap-7 text-center">
         <h1 className="launcher-heading text-3xl sm:text-4xl">Welcome to Twilight Launcher</h1>
         {method === null ? (
           <div className="flex flex-wrap justify-center gap-3">
@@ -58,7 +61,8 @@ export function AccountWelcome({ onAccount, onSkip }: {
           </form>
         )}
         <button type="button" disabled={busy} className="text-[11px] text-muted hover:text-fg" onClick={onSkip}>Skip for now</button>
-      </section>
+        </section>
+      </div>
     </div>
   );
 }

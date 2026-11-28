@@ -7,7 +7,6 @@ use crate::paths::LauncherPaths;
 
 const EDITABLE_EXTENSIONS: &[&str] = &[
     "toml", "json", "json5", "properties", "txt", "cfg", "conf", "yml", "yaml", "ini", "mcmeta",
-    "log",
 ];
 
 pub fn list_profile_directory(
@@ -50,6 +49,7 @@ pub fn list_profile_directory(
             size_bytes: if meta.is_dir() { 0 } else { meta.len() },
             modified_at,
             editable_config: !meta.is_dir() && EDITABLE_EXTENSIONS.contains(&ext.as_str()),
+            readable_log: !meta.is_dir() && ext == "log",
             is_archive: !meta.is_dir() && ext == "zip",
         });
     }
@@ -218,7 +218,7 @@ pub fn delete_profile_entry(
     Ok(())
 }
 
-/// Built-in Lightweight Config Editor: reads text config files inside a profile.
+/// Built-in Lightweight Config & Log Reader: reads text config/log files inside a profile.
 pub fn read_profile_text_file(
     paths: &LauncherPaths,
     profile_id: &str,
@@ -228,9 +228,10 @@ pub fn read_profile_text_file(
     let meta = std::fs::metadata(&target)?;
     anyhow::ensure!(
         meta.len() <= 4 * 1024 * 1024,
-        "File is larger than 4 MB config editor limit"
+        "File is larger than 4 MB viewer limit"
     );
-    Ok(std::fs::read_to_string(target)?)
+    let raw = std::fs::read(target)?;
+    Ok(String::from_utf8_lossy(&raw).into_owned())
 }
 
 pub fn write_profile_text_file(
@@ -240,6 +241,11 @@ pub fn write_profile_text_file(
     content: &str,
 ) -> Result<()> {
     let target = paths.resolve_inside_profile(profile_id, relative_path)?;
+    let ext = target
+        .extension()
+        .map(|e| e.to_string_lossy().to_ascii_lowercase())
+        .unwrap_or_default();
+    anyhow::ensure!(ext != "log", "Log files are read-only");
     if let Some(p) = target.parent() {
         std::fs::create_dir_all(p)?;
     }

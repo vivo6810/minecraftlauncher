@@ -100,7 +100,7 @@ export function RubberSegment<T extends string>({ items, value, onChange, label,
     const next = slots.current.reduce((best, slot, i, all) =>
       Math.abs((slot.left + slot.right) / 2 - target) <
       Math.abs((all[best].left + all[best].right) / 2 - target) ? i : best, index);
-    land(next, false, velocity);
+    land(index, false, velocity);
     if (next !== index) onChange(items[next].value);
   };
 

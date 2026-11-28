@@ -238,4 +238,27 @@ mod tests {
         assert_eq!(quilt[1], "0.31.0-beta.6");
         assert_eq!(quilt[2], "0.30.2");
     }
+
+    #[test]
+    fn log_files_are_read_only_and_distinct_from_editable_configs() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = LauncherPaths::from_root(temp.path().to_path_buf()).unwrap();
+        let prof_dir = paths.ensure_profile_layout("prof-logs").unwrap();
+        std::fs::write(prof_dir.join("logs/latest.log"), b"[main/INFO]: Ready \xff\n").unwrap();
+        std::fs::write(prof_dir.join("options.txt"), b"fov:0.0\n").unwrap();
+
+        let log_nodes = files::list_profile_directory(&paths, "prof-logs", "logs").unwrap();
+        assert_eq!(log_nodes.len(), 1);
+        assert!(!log_nodes[0].editable_config);
+        assert!(log_nodes[0].readable_log);
+
+        let root_nodes = files::list_profile_directory(&paths, "prof-logs", "").unwrap();
+        let opts = root_nodes.iter().find(|n| n.name == "options.txt").unwrap();
+        assert!(opts.editable_config);
+        assert!(!opts.readable_log);
+
+        let read_log = files::read_profile_text_file(&paths, "prof-logs", "logs/latest.log").unwrap();
+        assert!(read_log.contains("[main/INFO]: Ready"));
+        assert!(files::write_profile_text_file(&paths, "prof-logs", "logs/latest.log", "overwrite").is_err());
+    }
 }

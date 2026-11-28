@@ -253,27 +253,121 @@ where
 
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
-    let (_, _, status) = tokio::join!(
-        stream_game_output(stdout, &on_log_line),
-        stream_game_output(stderr, &on_log_line),
-        child.wait()
-    );
+    let status = drain_pipes_with_exit(
+        stdout,
+        stderr,
+        child.wait(),
+        POST_EXIT_PIPE_DRAIN_TIMEOUT,
+        &on_log_line,
+    )
+    .await;
     Ok(status?.code().unwrap_or(-1))
+}
+
+const MAX_LOG_LINE_BYTES: usize = 8192;
+const POST_EXIT_PIPE_DRAIN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
+
+async fn drain_pipes_with_exit<Out, Err, WaitFut, T>(
+    stdout: Option<Out>,
+    stderr: Option<Err>,
+    wait_fut: WaitFut,
+    drain_timeout: std::time::Duration,
+    on_log_line: &impl Fn(String),
+) -> T
+where
+    Out: tokio::io::AsyncRead + Unpin,
+    Err: tokio::io::AsyncRead + Unpin,
+    WaitFut: std::future::Future<Output = T>,
+{
+    let drain = async {
+        tokio::join!(
+            stream_game_output(stdout, on_log_line),
+            stream_game_output(stderr, on_log_line),
+        );
+    };
+    tokio::pin!(drain);
+    tokio::pin!(wait_fut);
+
+    let mut drain_finished = false;
+    let exit_out = tokio::select! {
+        res = &mut wait_fut => res,
+        () = &mut drain => {
+            drain_finished = true;
+            wait_fut.await
+        }
+    };
+
+    if !drain_finished {
+        let _ = tokio::time::timeout(drain_timeout, &mut drain).await;
+    }
+    exit_out
 }
 
 async fn stream_game_output(
     stream: Option<impl tokio::io::AsyncRead + Unpin>,
     on_line: &impl Fn(String),
 ) {
-    if let Some(stream) = stream {
-        let mut reader = BufReader::new(stream);
-        let mut bytes = Vec::new();
-        while let Ok(count) = reader.read_until(b'\n', &mut bytes).await {
-            if count == 0 {
+    let Some(stream) = stream else {
+        return;
+    };
+    let mut reader = BufReader::new(stream);
+    let mut bytes = Vec::with_capacity(1024);
+    let mut skip_leading_lf = false;
+
+    loop {
+        let available = match reader.fill_buf().await {
+            Ok(buf) if !buf.is_empty() => buf,
+            _ => {
+                if !bytes.is_empty() {
+                    on_line(
+                        String::from_utf8_lossy(&bytes)
+                            .trim_end_matches(['\r', '\n'])
+                            .to_owned(),
+                    );
+                }
                 break;
             }
-            on_line(String::from_utf8_lossy(&bytes).trim_end_matches(['\r', '\n']).to_owned());
+        };
+
+        let mut start = 0;
+        if skip_leading_lf {
+            skip_leading_lf = false;
+            if available[0] == b'\n' {
+                start = 1;
+            }
+        }
+        if start >= available.len() {
+            let len = available.len();
+            reader.consume(len);
+            continue;
+        }
+
+        let slice = &available[start..];
+        let room = MAX_LOG_LINE_BYTES - bytes.len();
+        if let Some(nl_offset) = slice[..slice.len().min(room)]
+            .iter()
+            .position(|&b| b == b'\n')
+        {
+            bytes.extend_from_slice(&slice[..nl_offset]);
+            reader.consume(start + nl_offset + 1);
+            if bytes.last() == Some(&b'\r') {
+                bytes.pop();
+            }
+            on_line(String::from_utf8_lossy(&bytes).into_owned());
             bytes.clear();
+        } else if slice.len() >= room {
+            bytes.extend_from_slice(&slice[..room]);
+            reader.consume(start + room);
+            if bytes.last() == Some(&b'\r') {
+                bytes.pop();
+                skip_leading_lf = true;
+            }
+            on_line(String::from_utf8_lossy(&bytes).into_owned());
+            bytes.clear();
+        } else {
+            bytes.extend_from_slice(slice);
+            let consumed = start + slice.len();
+            reader.consume(consumed);
         }
     }
 }
@@ -303,6 +397,57 @@ mod tests {
         assert!(lines.iter().any(|line| line == "stdout line exceeds pipe capacity"));
         assert!(lines.iter().any(|line| line == "stderr line with invalid byte \u{fffd}"));
         assert!(lines.iter().any(|line| line == "last line"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn bounds_unterminated_output_chunks_to_max_line_bytes() -> Result<()> {
+        let (stdout, mut out) = tokio::io::duplex(256);
+        let lines = Mutex::new(Vec::new());
+        let collect = |line| lines.lock().unwrap().push(line);
+        let payload = vec![b'x'; MAX_LOG_LINE_BYTES * 2 + 137];
+        let ((), written) = tokio::join!(
+            stream_game_output(Some(stdout), &collect),
+            async move { out.write_all(&payload).await },
+        );
+        written?;
+        let lines = lines.into_inner().unwrap();
+        assert_eq!(lines.len(), 3);
+        assert_eq!(lines[0].len(), MAX_LOG_LINE_BYTES);
+        assert_eq!(lines[1].len(), MAX_LOG_LINE_BYTES);
+        assert_eq!(lines[2].len(), 137);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn returns_promptly_when_inherited_pipe_remains_open_after_exit() -> Result<()> {
+        let (stdout, mut lingering_writer) = tokio::io::duplex(128);
+        let (stderr, mut err) = tokio::io::duplex(128);
+        lingering_writer.write_all(b"started helper\n").await?;
+        err.write_all(b"final stderr line\n").await?;
+        drop(err);
+
+        let lines = Mutex::new(Vec::new());
+        let collect = |line| lines.lock().unwrap().push(line);
+        let code = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            drain_pipes_with_exit(
+                Some(stdout),
+                Some(stderr),
+                async {
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    0i32
+                },
+                std::time::Duration::from_millis(60),
+                &collect,
+            ),
+        )
+        .await?;
+        assert_eq!(code, 0);
+        let captured = lines.into_inner().unwrap();
+        assert!(captured.iter().any(|l| l == "started helper"));
+        assert!(captured.iter().any(|l| l == "final stderr line"));
+        drop(lingering_writer);
         Ok(())
     }
 }

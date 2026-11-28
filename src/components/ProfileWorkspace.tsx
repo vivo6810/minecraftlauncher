@@ -84,6 +84,7 @@ export const ProfileWorkspace: React.FC<Props> = ({
   const [currentDir, setCurrentDir] = useState("");
   const [entries, setEntries] = useState<FileNode[]>([]);
   const [editingPath, setEditingPath] = useState<string | null>(null);
+  const [editingReadOnly, setEditingReadOnly] = useState(false);
   const [editingContent, setEditingContent] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -193,17 +194,26 @@ export const ProfileWorkspace: React.FC<Props> = ({
     e.target.value = "";
   };
 
-  const openConfigEditor = async (node: FileNode) => {
-    const txt = await LauncherBridge.readConfigText(profile.id, node.relative_path);
-    setEditingPath(node.relative_path);
-    setEditingContent(txt);
+  const openConfigEditor = async (node: FileNode, readOnly = false) => {
+    try {
+      const txt = await LauncherBridge.readConfigText(profile.id, node.relative_path);
+      setEditingReadOnly(readOnly);
+      setEditingPath(node.relative_path);
+      setEditingContent(txt);
+    } catch (err) {
+      onToast(String(err));
+    }
   };
 
   const saveConfigEditor = async () => {
-    if (!editingPath) return;
-    await LauncherBridge.writeConfigText(profile.id, editingPath, editingContent);
-    onToast(`Saved ${editingPath}`);
-    await refreshDir(currentDir);
+    if (!editingPath || editingReadOnly) return;
+    try {
+      await LauncherBridge.writeConfigText(profile.id, editingPath, editingContent);
+      onToast(`Saved ${editingPath}`);
+      await refreshDir(currentDir);
+    } catch (err) {
+      onToast(String(err));
+    }
   };
 
   const copyScreenshotToClipboard = async (shot: ScreenshotItem) => {
@@ -591,7 +601,8 @@ export const ProfileWorkspace: React.FC<Props> = ({
                       type="button"
                       onClick={() => {
                         if (node.is_dir) setCurrentDir(node.relative_path);
-                        else if (node.editable_config) void openConfigEditor(node);
+                        else if (node.editable_config) void openConfigEditor(node, false);
+                        else if (node.readable_log) void openConfigEditor(node, true);
                       }}
                       className="flex items-center gap-2.5 min-w-0 text-left flex-1"
                     >
@@ -607,10 +618,19 @@ export const ProfileWorkspace: React.FC<Props> = ({
                       {node.editable_config && (
                         <button
                           type="button"
-                          onClick={() => void openConfigEditor(node)}
+                          onClick={() => void openConfigEditor(node, false)}
                           className="px-2.5 py-1 rounded-lg bg-elevated border border-border text-[11px]"
                         >
                           Edit
+                        </button>
+                      )}
+                      {node.readable_log && (
+                        <button
+                          type="button"
+                          onClick={() => void openConfigEditor(node, true)}
+                          className="px-2.5 py-1 rounded-lg bg-elevated border border-border text-[11px]"
+                        >
+                          View
                         </button>
                       )}
                       {node.is_archive && (
@@ -649,22 +669,34 @@ export const ProfileWorkspace: React.FC<Props> = ({
 
           {editingPath && (
             <div className="lg:col-span-6 p-4 rounded-2xl bg-surface border border-border flex flex-col space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-semibold truncate">
-                  {editingPath}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void saveConfigEditor()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-fg text-bg text-xs font-medium"
-                  >
-                    <Save className="w-3.5 h-3.5" /> Save
-                  </button>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-mono font-semibold truncate">
+                    {editingPath}
+                  </span>
+                  {editingReadOnly && (
+                    <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-muted">
+                      Read-only
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!editingReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => void saveConfigEditor()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-fg text-bg text-xs font-medium"
+                    >
+                      <Save className="w-3.5 h-3.5" /> Save
+                    </button>
+                  )}
                   <button
                     type="button"
                     aria-label="Close editor"
-                    onClick={() => setEditingPath(null)}
+                    onClick={() => {
+                      setEditingPath(null);
+                      setEditingReadOnly(false);
+                    }}
                     className="p-1.5 rounded-lg bg-elevated"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -673,7 +705,10 @@ export const ProfileWorkspace: React.FC<Props> = ({
               </div>
               <textarea
                 value={editingContent}
-                onChange={(e) => setEditingContent(e.target.value)}
+                readOnly={editingReadOnly}
+                onChange={(e) => {
+                  if (!editingReadOnly) setEditingContent(e.target.value);
+                }}
                 rows={14}
                 className="w-full flex-1 font-mono text-xs p-3 rounded-xl bg-elevated border border-border text-fg focus:outline-none focus:border-fg"
               />

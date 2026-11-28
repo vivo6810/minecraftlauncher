@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Check, ChevronLeft, ChevronRight, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Plus, RefreshCw, Trash2 } from "lucide-react";
 import { LauncherBridge } from "../lib/bridge";
 import { getDefaultSteveSkinDataUrl } from "../lib/defaultSteve";
 import {
@@ -22,6 +22,8 @@ interface Props {
 export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast }) => {
   const [leftCollapsed, setLeftCollapsed] = useState(false);
   const [renderLeftContent, setRenderLeftContent] = useState(true);
+  const [pendingSkinSyncRetry, setPendingSkinSyncRetry] = useState(false);
+  const [retryingSkinSync, setRetryingSkinSync] = useState(false);
   const leftPanelRef = useRef<HTMLDivElement | null>(null);
   const collapseBtnRef = useRef<HTMLButtonElement | null>(null);
   const skinInputRef = useRef<HTMLInputElement | null>(null);
@@ -31,6 +33,10 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
   const activeAccount =
     state.accounts.find((a) => a.active) ?? state.accounts[0];
   const isMicrosoft = activeAccount?.account_type === "microsoft";
+
+  useEffect(() => {
+    setPendingSkinSyncRetry(false);
+  }, [activeAccount?.id]);
 
   const skinVariant = activeAccount?.skin_variant ?? "classic";
 
@@ -81,8 +87,16 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
     }
   };
 
-  const refreshLatestStateAfterSyncError = async (reqId: number, err: unknown) => {
-    onToast(String(err));
+  const refreshLatestStateAfterSyncError = async (
+    reqId: number,
+    err: unknown,
+    markSkinRetry = false
+  ) => {
+    const message = String(err);
+    onToast(message);
+    if (markSkinRetry && isMicrosoft) {
+      setPendingSkinSyncRetry(true);
+    }
     try {
       const latest = await LauncherBridge.getState();
       applyIfCurrent(reqId, latest);
@@ -129,10 +143,13 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
           kind,
           skinVariant
         );
+        if (kind === "skin" && wardrobeReqSeqRef.current === reqId) {
+          setPendingSkinSyncRetry(false);
+        }
         applyIfCurrent(reqId, next);
         onToast(`Added ${cleanName}`);
       } catch (err) {
-        await refreshLatestStateAfterSyncError(reqId, err);
+        await refreshLatestStateAfterSyncError(reqId, err, kind === "skin");
       }
     };
     reader.readAsDataURL(file);
@@ -150,9 +167,12 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         "skin",
         skinVariant
       );
+      if (wardrobeReqSeqRef.current === reqId) {
+        setPendingSkinSyncRetry(false);
+      }
       applyIfCurrent(reqId, next);
     } catch (err) {
-      await refreshLatestStateAfterSyncError(reqId, err);
+      await refreshLatestStateAfterSyncError(reqId, err, true);
     }
   };
 
@@ -166,15 +186,28 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         "skin",
         variant
       );
+      if (wardrobeReqSeqRef.current === reqId) {
+        setPendingSkinSyncRetry(false);
+      }
       applyIfCurrent(reqId, next);
     } catch (err) {
-      await refreshLatestStateAfterSyncError(reqId, err);
+      await refreshLatestStateAfterSyncError(reqId, err, true);
     }
   };
 
   const handleSwitchVariant = async (nextVariant: SkinVariant) => {
-    if (nextVariant === skinVariant) return;
+    if (nextVariant === skinVariant && !pendingSkinSyncRetry) return;
     await handleEquipSkin(activeAccount?.skin_sha256 ?? "", nextVariant);
+  };
+
+  const handleRetrySkinSync = async () => {
+    if (!activeAccount || retryingSkinSync) return;
+    setRetryingSkinSync(true);
+    try {
+      await handleEquipSkin(activeAccount.skin_sha256 ?? "", skinVariant);
+    } finally {
+      setRetryingSkinSync(false);
+    }
   };
 
   const handleEquipCape = async (sha256: string) => {
@@ -554,12 +587,23 @@ export const WardrobeView: React.FC<Props> = ({ state, onStateChange, onToast })
         </button>
 
         <div className="absolute top-4 right-4 z-20 flex items-center gap-2 rounded-xl p-1.5">
+          {isMicrosoft && pendingSkinSyncRetry && (
+            <button
+              type="button"
+              disabled={retryingSkinSync || !activeAccount}
+              onClick={() => void handleRetrySkinSync()}
+              className="inline-flex items-center gap-1.5 rounded-lg bg-surface px-2.5 py-1.5 text-xs font-medium text-fg shadow-sm hover:bg-elevated disabled:opacity-50"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${retryingSkinSync ? "animate-spin" : ""}`} />
+              Retry sync
+            </button>
+          )}
           <span className="pl-1.5 text-xs font-medium text-muted">Arm model</span>
           <RubberSegment
             label="Skin arm model"
             items={[{ value: "classic", label: "Wide" }, { value: "slim", label: "Slim" }]}
             value={skinVariant}
-            disabled={!activeAccount}
+            disabled={!activeAccount || retryingSkinSync}
             onChange={(variant) => void handleSwitchVariant(variant)}
           />
         </div>

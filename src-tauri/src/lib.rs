@@ -877,7 +877,7 @@ pub fn run() {
     let paths = LauncherPaths::resolve_default().expect("Failed initializing TwilightLauncher directories");
     let initial_state = twilight_core::load_or_init_state(&paths).expect("Failed loading TwilightLauncher state");
     let http = reqwest::Client::builder()
-        .user_agent("TwilightLauncher/0.2.0 (github.com/vivo6810/minecraftlauncher)")
+        .user_agent("TwilightLauncher/1.0.1 (github.com/vivo6810/minecraftlauncher)")
         .build()
         .expect("Failed building HTTP client");
 

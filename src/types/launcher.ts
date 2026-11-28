@@ -154,6 +154,7 @@ export interface FileNode {
   size_bytes: number;
   modified_at: string;
   editable_config: boolean;
+  readable_log?: boolean;
   is_archive: boolean;
 }
 

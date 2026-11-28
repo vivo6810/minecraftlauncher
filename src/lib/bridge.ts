@@ -751,7 +751,8 @@ export const LauncherBridge = {
         modified_at: meta.modifiedAt,
         editable_config:
           !meta.isDir &&
-          ["toml", "json", "json5", "properties", "txt", "cfg", "yml", "yaml", "ini"].includes(ext),
+          ["toml", "json", "json5", "properties", "txt", "cfg", "conf", "yml", "yaml", "ini", "mcmeta"].includes(ext),
+        readable_log: !meta.isDir && ext === "log",
         is_archive: !meta.isDir && ext === "zip",
       });
     }
@@ -873,6 +874,9 @@ export const LauncherBridge = {
 
   async writeConfigText(profileId: string, relativePath: string, content: string): Promise<void> {
     if (isTauriDesktop()) return invoke("config_write_text", { profileId, relativePath, content });
+    if (relativePath.toLowerCase().endsWith(".log")) {
+      throw new Error("Log files are read-only");
+    }
     const s = getInitialWebState();
     const vfs = loadWebVfs(s.profiles);
     const p = (vfs[profileId] = vfs[profileId] || {});
@@ -1077,12 +1081,12 @@ export const LauncherBridge = {
     await new Promise(resolve => setTimeout(resolve, 600));
     onLog(demo[2]);
     const vfs = loadWebVfs(getInitialWebState().profiles);
-    const folder = vfs[profileId];
-    if (folder?.logs) {
-      const content = demo.join("\n") + "\n";
-      folder["logs/latest.log"] = { isDir: false, size: content.length, content, modifiedAt: new Date().toISOString() };
-      saveWebVfs(vfs);
-    }
+    const now = new Date().toISOString();
+    const folder = (vfs[profileId] = vfs[profileId] || {});
+    folder.logs ??= { isDir: true, size: 0, modifiedAt: now };
+    const content = demo.join("\n") + "\n";
+    folder["logs/latest.log"] = { isDir: false, size: content.length, content, modifiedAt: now };
+    saveWebVfs(vfs);
     return 0;
   },
 };

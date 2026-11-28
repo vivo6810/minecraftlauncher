@@ -97,17 +97,12 @@ npm run tauri build
 
 ---
 
-## Automated GitHub Actions Builds
+## Automated GitHub Actions Builds & Releases
 
-Every push to `main` (or manual **Run workflow** dispatch in GitHub Actions) compiles:
-- **Windows (`windows-latest`):** Portable `twilight-launcher.exe`, NSIS `*-setup.exe`, and WiX `*.msi`
+The CI/CD workflow (`.github/workflows/build.yml`) runs **exclusively on `main`** (on every push/merge to `main` or manual **Run workflow** dispatch on `main`), building Windows and Linux installers in parallel with Rust/npm/Tauri caching and automatically publishing the GitHub Release matching `src-tauri/tauri.conf.json` (currently **`v1.0.1`**):
+- **Windows (`windows-latest`):** Portable `TwilightLauncher-portable-x64.exe`, NSIS `*-setup.exe`, and WiX `*.msi`
 - **Linux (`ubuntu-22.04`):** `*.AppImage`, `*.deb`, and `*.rpm`
-
-Pushing a version tag publishes a full **GitHub Release** automatically:
-```bash
-git tag v0.1.0
-git push origin v0.1.0
-```
+- **Checksums:** `SHA256SUMS.txt` attached automatically to the GitHub Release
 
 ---
 
