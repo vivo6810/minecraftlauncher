@@ -1,3 +1,4 @@
+import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import type {
   CrashDiagnosis,
@@ -19,6 +20,8 @@ import type {
   WardrobeAssetKind,
 } from "../types/launcher";
 
+export const MODRINTH_PAGE_SIZE = 20;
+
 export function isTauriDesktop(): boolean {
   return (
     typeof window !== "undefined" &&
@@ -29,10 +32,6 @@ export function isTauriDesktop(): boolean {
 // --- Web Preview Persistence & Sample Monotone Assets (only used when !isTauriDesktop()) ---
 const STORAGE_KEY = "twilight_launcher_web_state_v1";
 const VFS_KEY = "twilight_launcher_web_vfs_v1";
-
-function migrateLegacyWebStorageIfNeeded(): void {
-  // Keep original v1 storage keys intact so existing web-preview profiles & VFS edits persist seamlessly
-}
 
 function makeMonotoneScreenshotSvgDataUrl(title: string, seed: number): string {
   const shadeA = seed % 2 === 0 ? "#121216" : "#18181e";
@@ -69,10 +68,17 @@ interface WebVfsEntry {
 type WebVfsMap = Record<string, Record<string, WebVfsEntry>>;
 
 function loadWebVfs(profiles: Profile[]): WebVfsMap {
-  migrateLegacyWebStorageIfNeeded();
   try {
     const raw = localStorage.getItem(VFS_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      const saved: WebVfsMap = JSON.parse(raw);
+      for (const profile of profiles) {
+        if (saved[profile.id] && !saved[profile.id].logs) {
+          saved[profile.id].logs = { isDir: true, size: 0, modifiedAt: profile.created_at };
+        }
+      }
+      return saved;
+    }
   } catch {
     // ignore
   }
@@ -88,6 +94,7 @@ function loadWebVfs(profiles: Profile[]): WebVfsMap {
       "saves/Twilight Survival": { isDir: true, size: 0, modifiedAt: now },
       "saves/Creative Redstone Lab": { isDir: true, size: 0, modifiedAt: now },
       screenshots: { isDir: true, size: 0, modifiedAt: now },
+      logs: { isDir: true, size: 0, modifiedAt: now },
       datapacks_global: { isDir: true, size: 0, modifiedAt: now },
       "options.txt": {
         isDir: false,
@@ -132,7 +139,6 @@ function saveWebVfs(vfs: WebVfsMap) {
 }
 
 function getInitialWebState(): LauncherStateSnapshot {
-  migrateLegacyWebStorageIfNeeded();
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw) return JSON.parse(raw);
@@ -168,21 +174,7 @@ function getInitialWebState(): LauncherStateSnapshot {
       },
     },
     profiles: [],
-    accounts: [
-      {
-        id: "offline-1",
-        username: "Player",
-        uuid: "e41f8b1c-4d23-3910-811a-9f88e72a1102",
-        account_type: "offline",
-        active: true,
-        skin_sha256: null,
-        skin_variant: "classic",
-        custom_cape_sha256: null,
-        official_cape_id: null,
-        official_capes: [],
-        external_yggdrasil_url: null,
-      },
-    ],
+    accounts: [],
     wardrobe: [],
   };
 
@@ -256,11 +248,11 @@ export const LauncherBridge = {
       // Fallback if preview iframe blocks external network
     }
     return {
-      latest: { release: "26.3", snapshot: "26.4-pre-1" },
+      latest: { release: "26.3", snapshot: "26.4-pre-2" },
       versions: [
-        { id: "26.3", type: "release", url: "", time: "", releaseTime: "2026-10-15T10:00:00Z" },
-        { id: "26.2", type: "release", url: "", time: "", releaseTime: "2026-07-10T10:00:00Z" },
-        { id: "26.1.2", type: "release", url: "", time: "", releaseTime: "2026-04-20T10:00:00Z" },
+        { id: "26.3", type: "release", url: "", time: "", releaseTime: "2026-09-15T11:23:02Z" },
+        { id: "26.2", type: "release", url: "", time: "", releaseTime: "2026-06-16T12:03:33Z" },
+        { id: "26.1.2", type: "release", url: "", time: "", releaseTime: "2026-04-09T10:12:23Z" },
         { id: "1.21.11", type: "release", url: "", time: "", releaseTime: "2025-12-09T10:00:00Z" },
         { id: "1.21.4", type: "release", url: "", time: "", releaseTime: "2024-12-03T10:00:00Z" },
         { id: "1.21.1", type: "release", url: "", time: "", releaseTime: "2024-08-08T10:00:00Z" },
@@ -271,7 +263,7 @@ export const LauncherBridge = {
         { id: "1.16.5", type: "release", url: "", time: "", releaseTime: "2021-01-15T10:00:00Z" },
         { id: "1.12.2", type: "release", url: "", time: "", releaseTime: "2017-09-18T10:00:00Z" },
         { id: "1.8.9", type: "release", url: "", time: "", releaseTime: "2015-12-09T10:00:00Z" },
-        { id: "26.4-pre-1", type: "snapshot", url: "", time: "", releaseTime: "2026-11-18T10:00:00Z" },
+        { id: "26.4-pre-2", type: "snapshot", url: "", time: "", releaseTime: "2026-11-27T10:00:38Z" },
       ],
     };
   },
@@ -547,8 +539,15 @@ export const LauncherBridge = {
       });
     }
     const s = getInitialWebState();
-    const hash = `sha256-${btoa(name + base64Png.slice(-32)).slice(0, 18)}`;
-    if (!s.wardrobe.some((w) => w.sha256 === hash && w.kind === kind)) {
+    const existingItem = s.wardrobe.find(
+      (item) => item.kind === kind && item.preview_data_url === base64Png
+    );
+    const hash = existingItem?.sha256 ?? Array.from(
+      crypto.getRandomValues(new Uint8Array(16)),
+      (byte) => byte.toString(16).padStart(2, "0")
+    ).join("");
+    if (existingItem && kind === "skin") existingItem.variant = variant;
+    if (!existingItem) {
       s.wardrobe.unshift({
         sha256: hash,
         name,
@@ -587,6 +586,8 @@ export const LauncherBridge = {
       if (kind === "skin") {
         acct.skin_sha256 = sha256 || null;
         acct.skin_variant = variant;
+        const skin = s.wardrobe.find((w) => w.kind === "skin" && w.sha256 === sha256);
+        if (skin) skin.variant = variant;
       } else {
         acct.custom_cape_sha256 = sha256 || null;
       }
@@ -625,10 +626,11 @@ export const LauncherBridge = {
     query: string,
     kind: ModrinthContentKind,
     mcVersion: string | null,
-    loader: ModLoaderKind | null
-  ): Promise<ModrinthSearchHit[]> {
+    loader: ModLoaderKind | null,
+    offset: number
+  ): Promise<{ hits: ModrinthSearchHit[]; total_hits: number }> {
     if (isTauriDesktop()) {
-      return invoke("search_modrinth_cmd", { query, kind, mcVersion, loader });
+      return invoke("search_modrinth_cmd", { query, kind, mcVersion, loader, offset });
     }
     try {
       const facets: string[][] = [[`project_type:${kind}`]];
@@ -639,20 +641,22 @@ export const LauncherBridge = {
       const url = new URL("https://api.modrinth.com/v2/search");
       url.searchParams.set("query", query);
       url.searchParams.set("facets", JSON.stringify(facets));
-      url.searchParams.set("limit", "20");
+      url.searchParams.set("limit", String(MODRINTH_PAGE_SIZE));
+      url.searchParams.set("offset", String(offset));
       const r = await fetch(url.toString());
-      if (r.ok) {
-        const json = await r.json();
-        return json.hits;
-      }
-    } catch {
-      // Fallback curated catalog when offline
+      if (!r.ok) throw new Error(`Modrinth returned HTTP ${r.status}`);
+      return await r.json();
+    } catch (error) {
+      if (offset > 0) throw error;
     }
-    return FALLBACK_MODRINTH_CATALOG.filter(
+    const hits = FALLBACK_MODRINTH_CATALOG.filter(
       (item) =>
         item.project_type === kind &&
+        (!mcVersion || item.versions.includes(mcVersion)) &&
+        (!loader || loader === "none" || kind !== "mod" || item.categories.includes(loader)) &&
         (!query || item.title.toLowerCase().includes(query.toLowerCase()))
     );
+    return { hits, total_hits: hits.length };
   },
 
   async installModrinthToProfile(
@@ -1064,9 +1068,35 @@ export const LauncherBridge = {
     };
   },
 
-  async launchProfile(profileId: string): Promise<number> {
-    if (isTauriDesktop()) return invoke("launch_profile_cmd", { profileId });
-    await new Promise((r) => setTimeout(r, 900));
+  async launchProfile(profileId: string, onLog: (line: string) => void): Promise<number> {
+    if (isTauriDesktop()) {
+      const unlisten = await listen<{ profile_id: string; line: string }>("twilight://game-log", ({ payload }) => {
+        if (payload.profile_id === profileId) onLog(payload.line);
+      });
+      try {
+        return await invoke("launch_profile_cmd", { profileId });
+      } finally {
+        unlisten();
+      }
+    }
+
+    const demo = [
+      "[Preview] Simulating a Minecraft launch.",
+      "[Preview] Loading profile settings.",
+      "[Preview] Simulation finished.",
+    ];
+    onLog(demo[0]);
+    await new Promise(resolve => setTimeout(resolve, 300));
+    onLog(demo[1]);
+    await new Promise(resolve => setTimeout(resolve, 600));
+    onLog(demo[2]);
+    const vfs = loadWebVfs(getInitialWebState().profiles);
+    const folder = vfs[profileId];
+    if (folder?.logs) {
+      const content = demo.join("\n") + "\n";
+      folder["logs/latest.log"] = { isDir: false, size: content.length, content, modifiedAt: new Date().toISOString() };
+      saveWebVfs(vfs);
+    }
     return 0;
   },
 };

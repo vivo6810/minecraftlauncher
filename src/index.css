@@ -4,25 +4,37 @@
 
 :root,
 [data-theme="dark"] {
-  --tw-bg: #09090b;
-  --tw-surface: #111114;
-  --tw-elevated: #19191e;
-  --tw-border: #27272e;
-  --tw-fg: #fafafa;
-  --tw-muted: #9898a3;
-  --tw-accent: #fafafa;
-  --tw-accent-fg: #09090b;
+  --tw-bg: rgb(var(--tw-bg-rgb));
+  --tw-surface: rgb(var(--tw-surface-rgb));
+  --tw-elevated: rgb(var(--tw-elevated-rgb));
+  --tw-border: rgb(var(--tw-border-rgb));
+  --tw-fg: rgb(var(--tw-fg-rgb));
+  --tw-muted: rgb(var(--tw-muted-rgb));
+  --tw-accent: rgb(var(--tw-accent-rgb));
+  --tw-accent-fg: rgb(var(--tw-accent-fg-rgb));
+  color-scheme: dark;
+  --tw-bg-rgb: 20 21 20;
+  --tw-surface-rgb: 28 30 28;
+  --tw-elevated-rgb: 37 40 37;
+  --tw-border-rgb: 53 56 53;
+  --tw-fg-rgb: 235 232 224;
+  --tw-muted-rgb: 165 169 162;
+  --tw-accent-rgb: 82 116 72;
+  --tw-accent-fg-rgb: 255 255 255;
+  --tw-spotlight: rgb(225 219 205 / 0.075);
 }
 
 [data-theme="light"] {
-  --tw-bg: #f6f6f7;
-  --tw-surface: #ffffff;
-  --tw-elevated: #ededf0;
-  --tw-border: #dedee3;
-  --tw-fg: #09090b;
-  --tw-muted: #65656f;
-  --tw-accent: #09090b;
-  --tw-accent-fg: #fafafa;
+  color-scheme: light;
+  --tw-bg-rgb: 246 243 230;
+  --tw-surface-rgb: 252 249 238;
+  --tw-elevated-rgb: 236 236 218;
+  --tw-border-rgb: 196 204 180;
+  --tw-fg-rgb: 38 59 44;
+  --tw-muted-rgb: 86 101 79;
+  --tw-accent-rgb: 69 97 65;
+  --tw-accent-fg-rgb: 255 251 237;
+  --tw-spotlight: rgb(113 110 98 / 0.10);
 }
 
 * {
@@ -45,4 +57,92 @@
 
 ::-webkit-scrollbar-thumb:hover {
   background: var(--tw-muted);
+}
+
+.launcher-shell {
+  background: var(--tw-bg);
+}
+
+.launcher-dock {
+  margin: 0.75rem 0 0.75rem 0.75rem;
+}
+
+.launcher-heading {
+  font-family: Georgia, "Times New Roman", serif;
+  letter-spacing: -0.035em;
+}
+
+.wardrobe-scene {
+  background: radial-gradient(ellipse at 52% 44%, var(--tw-spotlight), transparent 67%);
+}
+
+.launcher-view, .launcher-tab-content {
+  animation: launcher-enter 260ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes launcher-enter {
+  from { opacity: 0; translate: 0 4px; }
+  to { opacity: 1; translate: 0 0; }
+}
+
+.launcher-shell button {
+  transition-property: color, background-color, border-color, box-shadow, translate;
+  transition-duration: 180ms;
+  transition-timing-function: ease-out;
+}
+
+.launcher-shell button:not(:disabled):not(.rubber-segment__item):not(.squish-switch):active {
+  translate: 0 1px;
+}
+
+.launcher-shell :is(button, [role="button"], input, select, textarea):focus-visible {
+  outline: 2px solid var(--tw-accent);
+  outline-offset: 3px;
+}
+
+.startup-panel {
+  display: grid;
+  justify-items: center;
+  gap: 0.85rem;
+  animation: launcher-enter 260ms ease-out both;
+}
+
+.startup-track {
+  width: 8rem;
+  height: 0.25rem;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--tw-border);
+}
+
+.startup-track span {
+  display: block;
+  width: 45%;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--tw-accent);
+  animation: startup-progress 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes startup-progress {
+  from { translate: -15% 0; }
+  to { translate: 135% 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .launcher-shell button { transition: none; }
+  .launcher-view, .launcher-tab-content, .startup-panel, .startup-track span { animation: none; }
+}
+
+
+.wardrobe-frame {
+  height: calc(100% - 1.5rem);
+  margin: 0.75rem;
+}
+
+
+.accent-wheel {
+  background:
+    radial-gradient(circle closest-side, #808080, transparent),
+    conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
 }

@@ -4,14 +4,14 @@ export default {
   theme: {
     extend: {
       colors: {
-        bg: "var(--tw-bg)",
-        surface: "var(--tw-surface)",
-        elevated: "var(--tw-elevated)",
-        border: "var(--tw-border)",
-        fg: "var(--tw-fg)",
-        muted: "var(--tw-muted)",
-        accent: "var(--tw-accent)",
-        "accent-fg": "var(--tw-accent-fg)",
+        bg: "rgb(var(--tw-bg-rgb) / <alpha-value>)",
+        surface: "rgb(var(--tw-surface-rgb) / <alpha-value>)",
+        elevated: "rgb(var(--tw-elevated-rgb) / <alpha-value>)",
+        border: "rgb(var(--tw-border-rgb) / <alpha-value>)",
+        fg: "rgb(var(--tw-fg-rgb) / <alpha-value>)",
+        muted: "rgb(var(--tw-muted-rgb) / <alpha-value>)",
+        accent: "rgb(var(--tw-accent-rgb) / <alpha-value>)",
+        "accent-fg": "rgb(var(--tw-accent-fg-rgb) / <alpha-value>)",
       },
       fontFamily: {
         sans: [

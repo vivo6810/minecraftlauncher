@@ -1,18 +1,24 @@
 import React, { useEffect, useState } from "react";
+import { AccentSettings } from "./AccentSettings";
+import { BackgroundSettings } from "./BackgroundSettings";
+import { RubberSegment } from "./RubberSegment";
+import { SquishSwitch } from "./SquishSwitch";
 import { Check, Download, Plus, Trash2 } from "lucide-react";
 import { LauncherBridge } from "../lib/bridge";
-import type {
-  Account,
-  JavaRuntimeInfo,
-  LauncherSettings,
-  LauncherStateSnapshot,
-  WindowLaunchAction,
+import {
+  type Account,
+  type JavaRuntimeInfo,
+  type LauncherSettings,
+  type LauncherStateSnapshot,
+  type WindowLaunchAction,
 } from "../types/launcher";
 
 interface Props {
   settings: LauncherSettings;
   accounts: Account[];
   onSaveSettings: (next: LauncherSettings) => Promise<void>;
+  onSaveAccent: (color: string | null) => Promise<void>;
+  onSaveBackground: (image: string | null, blur: number) => Promise<void>;
   onStateChange: (next: LauncherStateSnapshot) => void;
   onToast: (msg: string) => void;
 }
@@ -28,6 +34,8 @@ export const SettingsView: React.FC<Props> = ({
   settings,
   accounts,
   onSaveSettings,
+  onSaveAccent,
+  onSaveBackground,
   onStateChange,
   onToast,
 }) => {
@@ -122,15 +130,18 @@ export const SettingsView: React.FC<Props> = ({
       <h2 className="text-lg font-semibold tracking-tight">Settings</h2>
 
       {/* ACCOUNTS (Vertical Line Format) */}
+      <AccentSettings color={settings.accent_color} onSave={onSaveAccent} />
+      <BackgroundSettings settings={settings} onSave={onSaveBackground} />
+
       <section className="space-y-2">
         <h3 className="text-xs font-mono uppercase tracking-wider text-muted px-1">
           Accounts
         </h3>
-        <div className="rounded-2xl bg-surface border border-border divide-y divide-border">
+        <div className="rounded-2xl bg-surface divide-y divide-border/40">
           {accounts.map((acct) => (
             <div
               key={acct.id}
-              className="px-4 py-3 flex items-center justify-between gap-3"
+              className="px-5 py-3.5 flex items-center justify-between gap-3"
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 <span className="text-xs font-semibold truncate">{acct.username}</span>
@@ -171,7 +182,7 @@ export const SettingsView: React.FC<Props> = ({
           ))}
 
           {/* Add Offline Account Row */}
-          <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
             <span className="text-xs font-medium">Offline Account</span>
             <div className="flex items-center gap-2">
               <input
@@ -196,7 +207,7 @@ export const SettingsView: React.FC<Props> = ({
           </div>
 
           {/* Connect Java Account Row */}
-          <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3">
+          <div className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
             <span className="text-xs font-medium">Java Account</span>
             <div className="flex items-center gap-2">
               <input
@@ -228,73 +239,49 @@ export const SettingsView: React.FC<Props> = ({
         <h3 className="text-xs font-mono uppercase tracking-wider text-muted px-1">
           Window & Launch
         </h3>
-        <div className="rounded-2xl bg-surface border border-border divide-y divide-border">
-          <div className="px-4 py-3 flex items-center justify-between gap-3">
+        <div className="rounded-2xl bg-surface divide-y divide-border/40">
+          <div className="px-5 py-3.5 flex items-center justify-between gap-3">
             <span className="text-xs font-medium">Theme</span>
-            <div className="inline-flex p-0.5 rounded-lg bg-elevated border border-border">
-              {(["dark", "light"] as const).map((t) => (
-                <button
-                  key={t}
-                  type="button"
-                  onClick={() => void onSaveSettings({ ...settings, theme: t })}
-                  className={`px-3 py-1 rounded-md text-xs font-medium capitalize ${
-                    settings.theme === t ? "bg-fg text-bg" : "text-muted hover:text-fg"
-                  }`}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <div className="px-4 py-3 flex flex-wrap items-center justify-between gap-3">
-            <span className="text-xs font-medium">On Launch</span>
-            <div className="inline-flex p-0.5 rounded-lg bg-elevated border border-border">
-              {LAUNCH_ACTIONS.map((act) => (
-                <button
-                  key={act.id}
-                  type="button"
-                  onClick={() =>
-                    void onSaveSettings({ ...settings, window_launch_action: act.id })
-                  }
-                  className={`px-2.5 py-1 rounded-md text-xs font-medium ${
-                    settings.window_launch_action === act.id
-                      ? "bg-fg text-bg"
-                      : "text-muted hover:text-fg"
-                  }`}
-                >
-                  {act.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          <label className="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
-            <span className="text-xs font-medium">Fullscreen on Launch</span>
-            <input
-              type="checkbox"
-              checked={settings.auto_fullscreen}
-              onChange={(e) =>
-                void onSaveSettings({ ...settings, auto_fullscreen: e.target.checked })
-              }
-              className="w-4 h-4 accent-current"
+            <RubberSegment
+              label="Theme"
+              items={[{ value: "dark", label: "Dark" }, { value: "light", label: "Light" }]}
+              value={settings.theme}
+              onChange={(value) => void onSaveSettings({ ...settings, theme: value })}
             />
-          </label>
+          </div>
 
-          <label className="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer">
-            <span className="text-xs font-medium">Restore Window on Exit</span>
-            <input
-              type="checkbox"
+          <div className="px-5 py-3.5 flex flex-wrap items-center justify-between gap-3">
+            <span className="text-xs font-medium">On Launch</span>
+            <RubberSegment
+              label="On Launch"
+              items={LAUNCH_ACTIONS.map(({ id, label }) => ({ value: id, label }))}
+              value={settings.window_launch_action}
+              onChange={(value) => void onSaveSettings({ ...settings, window_launch_action: value })}
+            />
+          </div>
+
+          <div className="px-5 py-3.5 flex items-center justify-between gap-3">
+              <span className="text-xs font-medium">Fullscreen on Launch</span>
+              <SquishSwitch label="Fullscreen on Launch"
+              checked={settings.auto_fullscreen}
+              onChange={(checked) =>
+                void onSaveSettings({ ...settings, auto_fullscreen: checked })
+              }
+              />
+            </div>
+
+          <div className="px-5 py-3.5 flex items-center justify-between gap-3">
+              <span className="text-xs font-medium">Restore Window on Exit</span>
+              <SquishSwitch label="Restore Window on Exit"
               checked={settings.restore_on_game_close}
-              onChange={(e) =>
+              onChange={(checked) =>
                 void onSaveSettings({
                   ...settings,
-                  restore_on_game_close: e.target.checked,
+                  restore_on_game_close: checked,
                 })
               }
-              className="w-4 h-4 accent-current"
-            />
-          </label>
+              />
+            </div>
         </div>
       </section>
 
@@ -303,7 +290,7 @@ export const SettingsView: React.FC<Props> = ({
         <h3 className="text-xs font-mono uppercase tracking-wider text-muted px-1">
           Security
         </h3>
-        <div className="rounded-2xl bg-surface border border-border divide-y divide-border">
+        <div className="rounded-2xl bg-surface divide-y divide-border/40">
           {(
             [
               { key: "token_vault", label: "Session Token Vault" },
@@ -312,23 +299,21 @@ export const SettingsView: React.FC<Props> = ({
               { key: "block_high_risk_jars", label: "Block Flagged Mods" },
             ] as const
           ).map((item) => (
-            <label
+            <div
               key={item.key}
-              className="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer"
+              className="px-5 py-3.5 flex items-center justify-between gap-3"
             >
               <span className="text-xs font-medium">{item.label}</span>
-              <input
-                type="checkbox"
+              <SquishSwitch label={item.label}
                 checked={settings.shield[item.key]}
-                onChange={(e) =>
+                onChange={(checked) =>
                   void onSaveSettings({
                     ...settings,
-                    shield: { ...settings.shield, [item.key]: e.target.checked },
+                    shield: { ...settings.shield, [item.key]: checked },
                   })
                 }
-                className="w-4 h-4 accent-current"
               />
-            </label>
+            </div>
           ))}
         </div>
       </section>
@@ -338,7 +323,7 @@ export const SettingsView: React.FC<Props> = ({
         <h3 className="text-xs font-mono uppercase tracking-wider text-muted px-1">
           Java
         </h3>
-        <div className="rounded-2xl bg-surface border border-border divide-y divide-border">
+        <div className="rounded-2xl bg-surface divide-y divide-border/40">
           {Array.from(new Set([...javaMajors, ...javas.map((j) => j.major_version)]))
             .sort((a, b) => a - b)
             .map((major) => {
@@ -347,7 +332,7 @@ export const SettingsView: React.FC<Props> = ({
               return (
                 <div
                   key={major}
-                  className="px-4 py-3 flex items-center justify-between gap-3"
+                  className="px-5 py-3.5 flex items-center justify-between gap-3"
                 >
                   <div className="flex items-center gap-2.5">
                     <span className="text-xs font-medium font-mono">
@@ -396,7 +381,7 @@ export const SettingsView: React.FC<Props> = ({
         <h3 className="text-xs font-mono uppercase tracking-wider text-muted px-1">
           Linux
         </h3>
-        <div className="rounded-2xl bg-surface border border-border divide-y divide-border">
+        <div className="rounded-2xl bg-surface divide-y divide-border/40">
           {(
             [
               { key: "discrete_gpu_dri_prime", label: "Discrete GPU (DRI_PRIME=1)" },
@@ -406,26 +391,24 @@ export const SettingsView: React.FC<Props> = ({
               { key: "mangohud", label: "MangoHud" },
             ] as const
           ).map((item) => (
-            <label
+            <div
               key={item.key}
-              className="px-4 py-3 flex items-center justify-between gap-3 cursor-pointer"
+              className="px-5 py-3.5 flex items-center justify-between gap-3"
             >
               <span className="text-xs font-medium">{item.label}</span>
-              <input
-                type="checkbox"
+              <SquishSwitch label={item.label}
                 checked={settings.linux_gaming[item.key]}
-                onChange={(e) =>
+                onChange={(checked) =>
                   void onSaveSettings({
                     ...settings,
                     linux_gaming: {
                       ...settings.linux_gaming,
-                      [item.key]: e.target.checked,
+                      [item.key]: checked,
                     },
                   })
                 }
-                className="w-4 h-4 accent-current"
               />
-            </label>
+            </div>
           ))}
         </div>
       </section>

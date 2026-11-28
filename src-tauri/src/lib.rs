@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use twilight_core::models::{
     AccountType, CrashDiagnosis, DatapackInstallTarget, FileNode, JarScanReport, JavaRuntimeInfo,
-    LauncherSettings, LauncherStateSnapshot, ModLoaderKind, ModrinthContentKind, ModrinthSearchHit,
+    LauncherSettings, LauncherStateSnapshot, ModLoaderKind, ModrinthContentKind,
     Profile, ScreenshotItem, SkinVariant, WardrobeAssetKind, WardrobeItem, WindowLaunchAction,
 };
 use twilight_core::paths::LauncherPaths;
@@ -212,11 +212,15 @@ async fn import_and_equip_wardrobe_png(
 
         let mut guard = ctx.state.lock().map_err(|e| e.to_string())?;
         let mut staged = guard.clone();
-        if !staged
+        if let Some(existing) = staged
             .wardrobe
-            .iter()
-            .any(|w| w.sha256 == item.sha256 && w.kind == item.kind)
+            .iter_mut()
+            .find(|w| w.sha256 == item.sha256 && w.kind == item.kind)
         {
+            if kind == WardrobeAssetKind::Skin {
+                existing.variant = variant;
+            }
+        } else {
             staged.wardrobe.insert(0, item.clone());
         }
         let mut needs_sync = false;
@@ -326,6 +330,13 @@ async fn equip_existing_wardrobe_item(
         if let Some(acct) = staged.accounts.iter_mut().find(|a| a.id == account_id) {
             match kind {
                 WardrobeAssetKind::Skin => {
+                    if let Some(skin) = staged
+                        .wardrobe
+                        .iter_mut()
+                        .find(|w| w.kind == WardrobeAssetKind::Skin && w.sha256 == sha256)
+                    {
+                        skin.variant = variant;
+                    }
                     acct.skin_sha256 = if sha256.is_empty() {
                         None
                     } else {
@@ -447,14 +458,16 @@ async fn search_modrinth_cmd(
     kind: ModrinthContentKind,
     mc_version: Option<String>,
     loader: Option<ModLoaderKind>,
-) -> Result<Vec<ModrinthSearchHit>, String> {
+    offset: u32,
+) -> Result<twilight_core::modrinth::ModrinthSearchResponse, String> {
     twilight_core::modrinth::search_modrinth(
         &ctx.http,
         &query,
         kind,
         mc_version.as_deref(),
         loader,
-        24,
+        20,
+        offset,
     )
     .await
     .map_err(|e| e.to_string())
@@ -790,6 +803,7 @@ async fn launch_profile_cmd(
     let window_action = settings.window_launch_action;
 
     let app_for_logs = app.clone();
+    let log_profile_id = profile_id.clone();
     let exit_code = twilight_core::launch::prepare_and_spawn_minecraft(
         &ctx.http,
         &ctx.paths,
@@ -823,7 +837,10 @@ async fn launch_profile_cmd(
             }
         },
         move |line| {
-            let _ = app_for_logs.emit("twilight://game-log", line);
+            let _ = app_for_logs.emit(
+                "twilight://game-log",
+                serde_json::json!({ "profile_id": &log_profile_id, "line": line }),
+            );
         },
     )
     .await

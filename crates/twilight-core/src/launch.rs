@@ -44,7 +44,7 @@ pub async fn prepare_and_spawn_minecraft<F, L>(
 ) -> Result<i32>
 where
     F: FnMut(String, f32) + Send,
-    L: FnMut(String) + Send + 'static,
+    L: Fn(String) + Send + Sync + 'static,
 {
     let profile_dir = paths.ensure_profile_layout(&profile.id)?;
 
@@ -273,16 +273,58 @@ where
         .spawn()
         .with_context(|| format!("Failed spawning game command `{program}`"))?;
 
-    if let Some(stdout) = child.stdout.take() {
-        let mut reader = BufReader::new(stdout).lines();
-        let mut log_cb = on_log_line;
-        tokio::spawn(async move {
-            while let Ok(Some(line)) = reader.next_line().await {
-                log_cb(line);
-            }
-        });
-    }
+    let stdout = child.stdout.take();
+    let stderr = child.stderr.take();
+    let (_, _, status) = tokio::join!(
+        stream_game_output(stdout, &on_log_line),
+        stream_game_output(stderr, &on_log_line),
+        child.wait()
+    );
+    Ok(status?.code().unwrap_or(-1))
+}
 
-    let status = child.wait().await?;
-    Ok(status.code().unwrap_or(-1))
+async fn stream_game_output(
+    stream: Option<impl tokio::io::AsyncRead + Unpin>,
+    on_line: &impl Fn(String),
+) {
+    if let Some(stream) = stream {
+        let mut reader = BufReader::new(stream);
+        let mut bytes = Vec::new();
+        while let Ok(count) = reader.read_until(b'\n', &mut bytes).await {
+            if count == 0 {
+                break;
+            }
+            on_line(String::from_utf8_lossy(&bytes).trim_end_matches(['\r', '\n']).to_owned());
+            bytes.clear();
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+    use tokio::io::AsyncWriteExt;
+
+    #[tokio::test]
+    async fn streams_both_game_output_pipes_until_eof() -> Result<()> {
+        let (stdout, mut out) = tokio::io::duplex(16);
+        let (stderr, mut err) = tokio::io::duplex(16);
+        let lines = Mutex::new(Vec::new());
+        let collect = |line| lines.lock().unwrap().push(line);
+        let ((), (), written) = tokio::join!(
+            stream_game_output(Some(stdout), &collect),
+            stream_game_output(Some(stderr), &collect),
+            async move {
+                out.write_all(b"stdout line exceeds pipe capacity\r\n").await?;
+                err.write_all(b"stderr line with invalid byte \xff\nlast line").await
+            },
+        );
+        written?;
+        let lines = lines.into_inner().unwrap();
+        assert!(lines.iter().any(|line| line == "stdout line exceeds pipe capacity"));
+        assert!(lines.iter().any(|line| line == "stderr line with invalid byte \u{fffd}"));
+        assert!(lines.iter().any(|line| line == "last line"));
+        Ok(())
+    }
 }

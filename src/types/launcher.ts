@@ -41,6 +41,9 @@ export interface LauncherSettings {
   auto_fullscreen: boolean;
   restore_on_game_close: boolean;
   theme: MonotoneTheme;
+  accent_color?: string | null;
+  background_image?: string | null;
+  background_blur?: number;
   default_memory_mb: number;
   concurrent_downloads: number;
   global_jvm_args: string[];

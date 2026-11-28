@@ -1,4 +1,4 @@
-import React, { Suspense, useEffect, useState } from "react";
+import React, { Suspense, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Command,
@@ -7,7 +7,8 @@ import {
   Settings as SettingsIcon,
   User,
 } from "lucide-react";
-import { LauncherBridge } from "./lib/bridge";
+import { accentRgb, readableAccentText } from "./lib/accent";
+import { isTauriDesktop, LauncherBridge } from "./lib/bridge";
 import {
   BOUNCE_SPRING,
   ELASTIC_SPRING,
@@ -16,6 +17,7 @@ import {
   type MinecraftVersionEntry,
   type Profile,
 } from "./types/launcher";
+import { AccountWelcome } from "./components/AccountWelcome";
 import { TitleBar } from "./components/TitleBar";
 import { CommandPalette } from "./components/CommandPalette";
 import { StartScreen } from "./components/StartScreen";
@@ -26,6 +28,8 @@ import { SettingsView } from "./components/SettingsView";
 const WardrobeView = React.lazy(() => import("./components/WardrobeView"));
 
 export const App: React.FC = () => {
+  const [skippedAccounts, setSkippedAccounts] = useState(false);
+  const [startupElapsed, setStartupElapsed] = useState(false);
   const [state, setState] = useState<LauncherStateSnapshot | null>(null);
   const [initError, setInitError] = useState<string | null>(null);
   const [loadingState, setLoadingState] = useState(false);
@@ -39,6 +43,19 @@ export const App: React.FC = () => {
   const [profileInitialTab, setProfileInitialTab] = useState("overview");
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
+  const [profileLogs, setProfileLogs] = useState<Record<string, string[]>>({});
+  const launchingProfiles = useRef(new Set<string>());
+  const latestSettings = useRef(state?.settings);
+  latestSettings.current = state?.settings;
+  const toastTimer = useRef<number | undefined>(undefined);
+  useEffect(() => () => window.clearTimeout(toastTimer.current), []);
+
+  const accent = state?.settings.accent_color;
+  useEffect(() => {
+    const rgb = accentRgb(accent);
+    document.documentElement.style.setProperty("--tw-accent-rgb", rgb.join(" "));
+    document.documentElement.style.setProperty("--tw-accent-fg-rgb", readableAccentText(rgb));
+  }, [accent]);
 
   const loadLauncherState = async () => {
     if (loadingState) return;
@@ -71,6 +88,8 @@ export const App: React.FC = () => {
   useEffect(() => {
     void loadLauncherState();
     void loadMcVersions();
+    const startupTimer = window.setTimeout(() => setStartupElapsed(true), 420);
+    return () => window.clearTimeout(startupTimer);
   }, []);
 
   useEffect(() => {
@@ -86,46 +105,69 @@ export const App: React.FC = () => {
 
   const showToast = (msg: string) => {
     setToast(msg);
-    window.setTimeout(() => {
-      setToast((curr) => (curr === msg ? null : curr));
-    }, 3000);
+    window.clearTimeout(toastTimer.current);
+    toastTimer.current = window.setTimeout(() => setToast(null), 3000);
   };
 
-  const handleSaveSettings = async (nextSettings: LauncherSettings) => {
-    const saved = await LauncherBridge.updateSettings(nextSettings);
-    document.documentElement.setAttribute("data-theme", saved.theme);
-    setState((prev) => (prev ? { ...prev, settings: saved } : prev));
-  };
-
-  const handleLaunch = async (profile: Profile) => {
-    if (!state) return;
-
-    if (
-      state.settings.shield.jar_scanner &&
-      state.settings.shield.block_high_risk_jars
-    ) {
-      const reports = await LauncherBridge.scanProfileMods(profile.id);
-      const bad = reports.filter((r) => !r.safe);
-      if (bad.length > 0) {
-        showToast(`Blocked flagged mod: ${bad[0].file_name}`);
-        setSelectedProfileId(profile.id);
-        setProfileInitialTab("shield");
-        setScreen("profile");
-        return;
-      }
-    }
-
+  const handleSaveSettings = async (nextSettings: LauncherSettings, reportInSettings = false) => {
     try {
-      await LauncherBridge.launchProfile(profile.id);
-      showToast(`Launching ${profile.name}`);
+      const saved = await LauncherBridge.updateSettings(nextSettings);
+      document.documentElement.setAttribute("data-theme", saved.theme);
+      setState((prev) => (prev ? { ...prev, settings: saved } : prev));
     } catch (err) {
+      if (reportInSettings) throw err;
       showToast(String(err));
     }
   };
 
-  if (!state) {
+  const handleLaunch = async (profile: Profile) => {
+    if (!state || launchingProfiles.current.has(profile.id)) return;
+    if (!state.accounts.length) {
+      setSkippedAccounts(false);
+      return;
+    }
+    launchingProfiles.current.add(profile.id);
+    setProfileLogs(previous => ({ ...previous, [profile.id]: [] }));
+    const appendLog = (line: string) => {
+      setProfileLogs(previous => ({
+        ...previous,
+        [profile.id]: [...(previous[profile.id] ?? []).slice(-1499), line.slice(0, 8192)],
+      }));
+    };
+
+    try {
+      if (state.settings.shield.jar_scanner && state.settings.shield.block_high_risk_jars) {
+        const reports = await LauncherBridge.scanProfileMods(profile.id);
+        const bad = reports.find((report) => !report.safe);
+        if (bad) {
+          showToast(`Blocked flagged mod: ${bad.file_name}`);
+          setSelectedProfileId(profile.id);
+          setProfileInitialTab("shield");
+          setScreen("profile");
+          return;
+        }
+      }
+
+      const desktop = isTauriDesktop();
+      showToast(desktop ? `Preparing ${profile.name}` : `Previewing launch for ${profile.name}`);
+      const exitCode = await LauncherBridge.launchProfile(profile.id, appendLog);
+      appendLog(`Exited with code ${exitCode}.`);
+      if (desktop) {
+        const latest = await LauncherBridge.getState();
+        setState((previous) => previous && { ...previous, profiles: latest.profiles });
+        showToast(`${profile.name} exited (code ${exitCode})`);
+      }
+    } catch (err) {
+      appendLog(`Launch failed: ${err}`);
+      showToast(String(err));
+    } finally {
+      launchingProfiles.current.delete(profile.id);
+    }
+  };
+
+  if (!state || !startupElapsed) {
     return (
-      <div className="h-screen w-screen flex flex-col bg-bg text-fg overflow-hidden">
+      <div className="launcher-shell h-screen w-screen flex flex-col text-fg overflow-hidden">
         <TitleBar />
         <div className="flex-1 flex flex-col items-center justify-center gap-3 px-6 text-center font-mono text-xs text-muted">
           {initError ? (
@@ -141,11 +183,19 @@ export const App: React.FC = () => {
               </button>
             </>
           ) : (
-            <span>Loading...</span>
+            <div className="startup-panel" role="status">
+              <h1 className="launcher-heading text-3xl text-fg">Twilight Launcher</h1>
+              <span>Loading launcher</span>
+              <div className="startup-track" aria-hidden="true"><span /></div>
+            </div>
           )}
         </div>
       </div>
     );
+  }
+
+  if (!state.accounts.length && !skippedAccounts) {
+    return <AccountWelcome onAccount={setState} onSkip={() => setSkippedAccounts(true)} />;
   }
 
   const selectedProfile =
@@ -161,13 +211,20 @@ export const App: React.FC = () => {
   const isWardrobeScreen = screen === "accounts";
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-bg text-fg overflow-hidden">
+    <div className="launcher-shell relative isolate h-screen w-screen flex flex-col text-fg overflow-hidden">
+      {state.settings.background_image && (
+        <div className="absolute inset-0 -z-10 overflow-hidden pointer-events-none" aria-hidden="true">
+          <img src={state.settings.background_image} alt="" className="h-full w-full object-cover"
+            style={{ filter: `blur(${Math.min(32, Math.max(0, state.settings.background_blur ?? 0))}px)`, transform: "scale(1.12)" }} />
+          <div className="absolute inset-0 bg-bg/65" />
+        </div>
+      )}
       {/* Custom Frameless TitleBar (Replaces Native OS Titlebar) */}
       <TitleBar />
 
       <div className="flex-1 min-h-0 flex overflow-hidden">
         {/* Left Navigation Dock */}
-        <aside className="w-16 md:w-48 shrink-0 border-r border-border bg-surface/70 flex flex-col justify-between p-2.5 md:p-3">
+        <aside className="launcher-dock w-[3.75rem] md:w-44 shrink-0 flex flex-col justify-between p-2 md:p-3">
           <nav className="space-y-1">
             {navItems.map((item) => {
               const Icon = item.icon;
@@ -178,18 +235,20 @@ export const App: React.FC = () => {
                   key={item.id}
                   type="button"
                   onClick={() => setScreen(item.id)}
+                  aria-label={item.label}
+                  aria-current={active ? "page" : undefined}
                   className={`relative w-full flex items-center justify-center md:justify-start gap-2.5 px-3 py-2.5 rounded-xl text-xs font-medium transition-colors ${
-                    active ? "text-bg" : "text-muted hover:text-fg"
+                    active ? "text-fg" : "text-muted hover:text-fg"
                   }`}
                 >
                   {active && (
                     <motion.div
                       layoutId="sidebarActivePill"
                       transition={BOUNCE_SPRING}
-                      className="absolute inset-0 bg-fg rounded-xl"
+                      className="absolute inset-0 bg-elevated rounded-xl"
                     />
                   )}
-                  <Icon className="w-4 h-4 relative z-10 shrink-0" />
+                  <Icon className={`w-4 h-4 relative z-10 shrink-0 ${active ? "text-accent" : ""}`} />
                   <span className="hidden md:inline relative z-10">{item.label}</span>
                 </button>
               );
@@ -199,7 +258,7 @@ export const App: React.FC = () => {
           <button
             type="button"
             onClick={() => setPaletteOpen(true)}
-            className="w-full flex items-center justify-center md:justify-between px-3 py-2 rounded-xl bg-elevated border border-border text-xs text-muted hover:text-fg"
+            className="w-full flex items-center justify-center md:justify-between px-3 py-2 rounded-xl bg-surface hover:bg-elevated text-xs text-muted hover:text-fg"
           >
             <span className="flex items-center gap-2">
               <Command className="w-3.5 h-3.5" />
@@ -211,10 +270,11 @@ export const App: React.FC = () => {
 
         {/* Main Content Area */}
         <main
+          key={screen}
           className={
             isWardrobeScreen
-              ? "flex-1 min-w-0 h-full overflow-hidden"
-              : "flex-1 min-w-0 h-full overflow-y-auto px-5 md:px-7 py-6"
+              ? "launcher-view flex-1 min-w-0 h-full overflow-hidden"
+              : "launcher-view flex-1 min-w-0 h-full overflow-y-auto px-5 md:px-7 py-6"
           }
         >
           {isWardrobeScreen ? (
@@ -264,6 +324,7 @@ export const App: React.FC = () => {
                   key={selectedProfile.id}
                   profile={selectedProfile}
                   allProfiles={state.profiles}
+                  logLines={profileLogs[selectedProfile.id] ?? []}
                   initialTab={profileInitialTab}
                   mcVersions={mcVersions}
                   onBack={() => setScreen("home")}
@@ -313,6 +374,14 @@ export const App: React.FC = () => {
                   settings={state.settings}
                   accounts={state.accounts}
                   onSaveSettings={handleSaveSettings}
+                  onSaveAccent={async (color) => {
+                    const settings = latestSettings.current;
+                    if (settings) await handleSaveSettings({ ...settings, accent_color: color }, true);
+                  }}
+                  onSaveBackground={async (image, blur) => {
+                    const settings = latestSettings.current;
+                    if (settings) await handleSaveSettings({ ...settings, background_image: image, background_blur: blur }, true);
+                  }}
                   onStateChange={setState}
                   onToast={showToast}
                 />
@@ -340,8 +409,11 @@ export const App: React.FC = () => {
           )
         }
         onSwitchAccount={async (id) => {
-          const next = await LauncherBridge.setActiveAccount(id);
-          setState(next);
+          try {
+            setState(await LauncherBridge.setActiveAccount(id));
+          } catch (err) {
+            showToast(String(err));
+          }
         }}
         onToggleTheme={() =>
           void handleSaveSettings({

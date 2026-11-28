@@ -74,6 +74,9 @@ pub struct LauncherSettings {
     pub restore_on_game_close: bool,
     /// Strict monotone theme (Pure Dark or Crisp Paper Light).
     pub theme: MonotoneTheme,
+    pub accent_color: Option<String>,
+    pub background_image: Option<String>,
+    pub background_blur: u8,
     /// Default memory allocation for newly created profiles (MB).
     pub default_memory_mb: u32,
     /// Concurrent HTTP download workers.
@@ -93,6 +96,9 @@ impl Default for LauncherSettings {
             auto_fullscreen: false,
             restore_on_game_close: true,
             theme: MonotoneTheme::Dark,
+            accent_color: None,
+            background_image: None,
+            background_blur: 0,
             default_memory_mb: 4096,
             concurrent_downloads: 24,
             global_jvm_args: vec![
