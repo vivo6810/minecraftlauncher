@@ -59,6 +59,23 @@ mod tests {
     use crate::models::{ModLoaderKind, SkinVariant, WardrobeAssetKind, WindowLaunchAction};
 
     #[test]
+    fn saved_profiles_with_retired_settings_still_load() {
+        let settings: LauncherSettings = serde_json::from_value(serde_json::json!({
+            "shield": { "os_sandbox": true, "jar_scanner": false }
+        })).unwrap();
+        let profile: models::Profile = serde_json::from_value(serde_json::json!({
+            "id": "existing-profile", "sandbox_override": true
+        })).unwrap();
+
+        assert_eq!(profile.id, "existing-profile");
+        assert!(!settings.shield.jar_scanner);
+        let saved_settings = serde_json::to_value(settings).unwrap();
+        let saved_profile = serde_json::to_value(profile).unwrap();
+        assert!(saved_settings["shield"].get("os_sandbox").is_none());
+        assert!(saved_profile.get("sandbox_override").is_none());
+    }
+
+    #[test]
     fn unreadable_state_is_preserved_before_recovery() {
         let root = tempfile::tempdir().unwrap();
         let paths = LauncherPaths::from_root(root.path().to_path_buf()).unwrap();
@@ -85,7 +102,6 @@ mod tests {
         assert_eq!(settings.window_launch_action, WindowLaunchAction::Minimize);
         assert!(!settings.auto_fullscreen);
         assert!(settings.shield.token_vault);
-        assert!(settings.shield.os_sandbox);
         assert!(settings.shield.jar_scanner);
     }
 

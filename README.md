@@ -11,10 +11,9 @@
 - **Ultra-Lightweight Footprint:** Native **Rust (`twilight-core`) + Tauri v2** desktop architecture (~80–120 MB RAM) with concurrent async SHA-1 asset & library verification.
 - **Monotone UI & Spring Physics:** Frameless custom window (`decorations: false`), obsidian/paper monotone chrome while preserving full original colors on all mods, skins, capes, and screenshots, plus a **`Ctrl + K` Command Palette**.
 - **Window & Launch Controls:** User-configurable on-launch window behavior (**defaults to Minimize on Launch**, with options for *Keep Open*, *Minimize to System Tray*, and *Close Launcher*) + **Auto-Enable Fullscreen** toggle (**OFF** by default).
-- **Twilight Shield (3-Layer Anti-Malware Mod Confinement):**
+- **Twilight Shield:**
   1. **Native Session Token Vault:** Never passes real Microsoft `accessToken` strings into JVM memory or CLI arguments—brokers `/session/minecraft/join` over `127.0.0.1` in Rust.
-  2. **OS Filesystem Sandbox (~0% FPS Overhead):** Uses **`bubblewrap` (`bwrap`)** on Linux and **AppContainer / Restricted ACLs** on Windows to lock JVM read-write strictly to `instances/<profile>/`, hiding `$HOME`, `.ssh`, browser cookies/passwords, Discord tokens, and wallets.
-  3. **Fast Rust `.jar` Threat Scanner:** Inspects `.class` Constant Pool UTF-8 entries in milliseconds before launch and on file import to flag Discord/Telegram exfiltration webhooks, credential theft paths, and shell execution.
+  2. **Fast Rust `.jar` Threat Scanner:** Inspects `.class` Constant Pool UTF-8 entries in milliseconds before launch and on file import to flag Discord/Telegram exfiltration webhooks, credential theft paths, and shell execution.
 - **Multi-Account + Skins, Capes & Persistent Wardrobe:**
   - **Java Premium (Microsoft OAuth):** Upload user-provided `.png` skins (`Classic` / `Slim`) and switch official Mojang Capes.
   - **Offline Mode (`authlib-injector`):** Built-in zero-config **localhost Yggdrasil skin & cape server** in Rust (plus optional external Yggdrasil URL) so user-provided `.png` skins and custom `.png` capes render in-game offline.
@@ -81,7 +80,7 @@ TwilightLauncherData/
   ```bash
   sudo apt-get update
   sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential curl wget file \
-    libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm bubblewrap
+    libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev patchelf rpm
   ```
 
 ### Run in Development

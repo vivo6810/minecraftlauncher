@@ -294,7 +294,6 @@ export const SettingsView: React.FC<Props> = ({
           {(
             [
               { key: "token_vault", label: "Session Token Vault" },
-              { key: "os_sandbox", label: "Filesystem Sandbox" },
               { key: "jar_scanner", label: "Mod Bytecode Scanner" },
               { key: "block_high_risk_jars", label: "Block Flagged Mods" },
             ] as const

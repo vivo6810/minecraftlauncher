@@ -716,11 +716,6 @@ fn scan_profile_mods_cmd(
 }
 
 #[tauri::command]
-fn get_sandbox_status_cmd() -> twilight_core::security::SandboxCapabilityStatus {
-    twilight_core::security::detect_os_sandbox_support()
-}
-
-#[tauri::command]
 fn list_portable_javas_cmd(ctx: State<'_, AppContext>) -> Vec<JavaRuntimeInfo> {
     twilight_core::java_manager::list_installed_portable_javas(&ctx.paths)
 }
@@ -924,7 +919,6 @@ pub fn run() {
             list_profile_worlds_cmd,
             list_profile_screenshots_cmd,
             scan_profile_mods_cmd,
-            get_sandbox_status_cmd,
             list_portable_javas_cmd,
             list_available_java_majors_cmd,
             install_portable_java_cmd,

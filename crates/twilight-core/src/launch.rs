@@ -9,10 +9,7 @@ use crate::models::{Account, AccountType, LauncherSettings, Profile};
 use crate::modrinth::sync_global_datapacks_to_worlds;
 use crate::mojang::prepare_shared_vanilla_engine;
 use crate::paths::LauncherPaths;
-use crate::security::{
-    detect_os_sandbox_support, scan_profile_mods, spawn_token_vault_broker,
-    wrap_linux_bwrap_command,
-};
+use crate::security::{scan_profile_mods, spawn_token_vault_broker};
 use crate::yggdrasil_local::{ensure_authlib_injector_jar, spawn_local_yggdrasil_skin_server};
 
 #[derive(Debug, Clone, serde::Serialize)]
@@ -20,7 +17,6 @@ pub struct BuiltLaunchPlan {
     pub executable: String,
     pub args: Vec<String>,
     pub working_dir: String,
-    pub sandbox_active: bool,
     pub token_vault_active: bool,
     pub resolved_loader_version: Option<String>,
 }
@@ -29,8 +25,7 @@ pub struct BuiltLaunchPlan {
 /// - Auto-updated Mod Loader (if `profile.auto_update_loader` is enabled)
 /// - Automatic Portable Java Runtime (`shared/java/temurin-*`)
 /// - Strictly separated `[Isolated Loader JARs] + [Shared Pure Vanilla JARs]`
-/// - Twilight Shield: Pre-launch Rust `.jar` threat scan, Token Vault (`127.0.0.1` broker),
-///   and OS Filesystem Sandbox (`bubblewrap` on Linux / ACL confinement on Windows)
+/// - Twilight Shield: Pre-launch Rust `.jar` threat scan, Token Vault (`127.0.0.1` broker)
 /// - Offline custom skin & cape rendering via `authlib-injector` + localhost Yggdrasil server
 /// - `--fullscreen` flag controlled by `profile.fullscreen_override` or `settings.auto_fullscreen` (default OFF)
 pub async fn prepare_and_spawn_minecraft<F, L>(
@@ -219,26 +214,9 @@ where
     let mut combined_args = jvm_args;
     combined_args.extend(game_args);
 
-    // 9. Apply Linux Gaming Wrappers & OS Sandbox
+    // 9. Apply Linux Gaming wrappers
     let mut program = java_rt.executable_path.clone();
     let mut final_args = combined_args;
-
-    let use_sandbox = profile
-        .sandbox_override
-        .unwrap_or(settings.shield.os_sandbox);
-    let sandbox_cap = detect_os_sandbox_support();
-
-    if cfg!(target_os = "linux") && use_sandbox && sandbox_cap.available {
-        let (bwrap_prog, bwrap_args) =
-            wrap_linux_bwrap_command(paths, &profile_dir, &program, &final_args);
-        program = bwrap_prog;
-        final_args = bwrap_args;
-    }
-
-    #[cfg(target_os = "windows")]
-    if use_sandbox {
-        crate::security::prepare_windows_sandbox_acls(paths, &profile_dir);
-    }
 
     if cfg!(target_os = "linux") {
         if settings.linux_gaming.mangohud {

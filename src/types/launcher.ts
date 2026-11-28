@@ -31,7 +31,6 @@ export interface LinuxGamingConfig {
 
 export interface TwilightShieldConfig {
   token_vault: boolean;
-  os_sandbox: boolean;
   jar_scanner: boolean;
   block_high_risk_jars: boolean;
 }
@@ -62,7 +61,6 @@ export interface Profile {
   auto_update_loader: boolean;
   allocated_ram_mb: number;
   fullscreen_override: boolean | null;
-  sandbox_override: boolean | null;
   custom_jvm_args: string[];
   created_at: string;
   last_played: string | null;
@@ -200,13 +198,6 @@ export interface JarScanReport {
   scan_duration_ms: number;
   safe: boolean;
   findings: JarThreatFinding[];
-}
-
-export interface SandboxCapabilityStatus {
-  platform: string;
-  available: boolean;
-  backend_name: string;
-  details: string;
 }
 
 export interface IslandActivity {

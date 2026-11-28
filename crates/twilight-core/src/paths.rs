@@ -142,7 +142,7 @@ impl LauncherPaths {
     }
 
     /// Safely resolves a user-supplied relative path inside a profile directory,
-    /// blocking any `..` traversal outside the profile sandbox.
+    /// blocking any `..` traversal outside the profile directory.
     pub fn resolve_inside_profile(&self, profile_id: &str, rel: &str) -> Result<PathBuf> {
         let profile_root = self.ensure_profile_layout(profile_id)?.canonicalize()?;
         let cleaned = rel.trim_start_matches(['/', '\\']);

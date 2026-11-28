@@ -13,7 +13,6 @@ import type {
   ModrinthContentKind,
   ModrinthSearchHit,
   Profile,
-  SandboxCapabilityStatus,
   ScreenshotItem,
   SkinVariant,
   VersionManifest,
@@ -168,7 +167,6 @@ function getInitialWebState(): LauncherStateSnapshot {
       },
       shield: {
         token_vault: true,
-        os_sandbox: true,
         jar_scanner: true,
         block_high_risk_jars: true,
       },
@@ -723,7 +721,6 @@ export const LauncherBridge = {
       auto_update_loader: true,
       allocated_ram_mb: s.settings.default_memory_mb,
       fullscreen_override: null,
-      sandbox_override: null,
       custom_jvm_args: [],
       created_at: new Date().toISOString(),
       last_played: null,
@@ -956,17 +953,6 @@ export const LauncherBridge = {
             : [],
         };
       });
-  },
-
-  async getSandboxStatus(): Promise<SandboxCapabilityStatus> {
-    if (isTauriDesktop()) return invoke("get_sandbox_status_cmd");
-    return {
-      platform: "linux / windows",
-      available: true,
-      backend_name: "bubblewrap (Linux) • AppContainer ACL (Windows)",
-      details:
-        "Active: Confines JVM RW strictly to instances/<profile>/; mounts shared/ RO; hides $HOME / %APPDATA% credentials.",
-    };
   },
 
   async listAvailableJavaMajors(): Promise<number[]> {

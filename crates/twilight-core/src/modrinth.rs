@@ -453,7 +453,6 @@ pub async fn install_modpack_as_new_profile(
         auto_update_loader: false,
         allocated_ram_mb: default_ram_mb,
         fullscreen_override: None,
-        sandbox_override: None,
         custom_jvm_args: Vec::new(),
         created_at: chrono::Utc::now().to_rfc3339(),
         last_played: None,

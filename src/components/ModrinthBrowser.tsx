@@ -240,7 +240,6 @@ export const ModrinthBrowser: React.FC<Props> = ({
       auto_update_loader: true,
       allocated_ram_mb: 4096,
       fullscreen_override: null,
-      sandbox_override: null,
       custom_jvm_args: [],
       created_at: new Date().toISOString(),
       last_played: null,
