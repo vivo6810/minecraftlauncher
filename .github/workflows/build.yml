@@ -2,58 +2,37 @@ name: Build & Release TwilightLauncher
 
 on:
   push:
-    branches: [main, master]
-    tags: ['v*']
+    branches: [main]
   workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: write
 
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_PROFILE_RELEASE_DEBUG: "0"
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+  CARGO_PROFILE_RELEASE_LTO: "off"
+  CARGO_REGISTRIES_CRATES_IO_PROTOCOL: sparse
+
 jobs:
-  test-core:
-    name: Verify Rust Core & Frontend
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js 20
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-
-      - name: Run twilight-core unit tests
-        run: cargo test -p twilight-core
-
-      - name: Install frontend dependencies & verify TypeScript build
-        run: |
-          npm install
-          npm run build
-
   build-desktop:
     name: Build (${{ matrix.label }})
-    needs: test-core
+    if: github.ref == 'refs/heads/main'
     strategy:
-      fail-fast: false
+      fail-fast: true
       matrix:
         include:
           - platform: windows-latest
             label: Windows (.exe / NSIS / .msi)
-            artifact_name: TwilightLauncher-Windows-x64
-            args: ""
+            artifact_name: TwilightLauncher-Windows-x64-bundles
           - platform: ubuntu-22.04
             label: Linux (.AppImage / .deb / .rpm)
-            artifact_name: TwilightLauncher-Linux-x86_64
-            args: ""
+            artifact_name: TwilightLauncher-Linux-x86_64-bundles
 
     runs-on: ${{ matrix.platform }}
 
@@ -74,12 +53,21 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: ". -> target"
+          cache-all-crates: true
+          cache-on-failure: true
+
+      - name: Cache Linux Tauri bundler tools
+        if: matrix.platform == 'ubuntu-22.04'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/tauri
+          key: tauri-linux-tools-${{ runner.os }}-v1
 
       - name: Install Linux system dependencies (WebKit2GTK 4.1, AppImage, DEB, RPM)
         if: matrix.platform == 'ubuntu-22.04'
         run: |
           sudo apt-get update
-          sudo apt-get install -y \
+          sudo apt-get install -y --no-install-recommends \
             libwebkit2gtk-4.1-dev \
             build-essential \
             curl \
@@ -92,70 +80,84 @@ jobs:
             patchelf \
             rpm
 
+      - name: Run twilight-core unit tests
+        if: matrix.platform == 'ubuntu-22.04'
+        run: cargo test -p twilight-core
+
       - name: Install frontend dependencies
-        run: npm install
+        run: npm ci --prefer-offline --no-audit --no-fund
 
       - name: Build Tauri native bundles
         env:
           NO_STRIP: "true"
-        run: npx tauri build ${{ matrix.args }}
+        run: npx tauri build
 
-      - name: Upload Linux AppImage, DEB & RPM workflow artifacts
+      - name: Stage Linux AppImage, DEB & RPM bundles
         if: matrix.platform == 'ubuntu-22.04'
-        uses: actions/upload-artifact@v4
-        with:
-          name: TwilightLauncher-Linux-x86_64-bundles
-          path: |
-            target/release/bundle/appimage/*.AppImage
-            target/release/bundle/deb/*.deb
-            target/release/bundle/rpm/*.rpm
-          if-no-files-found: warn
-
-      - name: Upload Windows NSIS, MSI & portable .exe workflow artifacts
-        if: matrix.platform == 'windows-latest'
-        uses: actions/upload-artifact@v4
-        with:
-          name: TwilightLauncher-Windows-x64-bundles
-          path: |
-            target/release/twilight-launcher.exe
-            target/release/bundle/nsis/*.exe
-            target/release/bundle/msi/*.msi
-          if-no-files-found: warn
-
-      - name: Publish Linux AppImage, DEB & RPM to GitHub Release (on v* tag)
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'ubuntu-22.04'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh release view "${{ github.ref_name }}" >/dev/null 2>&1 || \
-            gh release create "${{ github.ref_name }}" \
-              --title "TwilightLauncher ${{ github.ref_name }}" \
-              --notes "Ultra-lightweight monotone Minecraft: Java Edition launcher (Windows & Linux)."
-          gh release upload "${{ github.ref_name }}" \
-            target/release/bundle/appimage/*.AppImage \
-            target/release/bundle/deb/*.deb \
-            target/release/bundle/rpm/*.rpm \
-            --clobber
+          mkdir -p release-staging
+          cp target/release/bundle/appimage/*.AppImage release-staging/
+          cp target/release/bundle/deb/*.deb release-staging/
+          cp target/release/bundle/rpm/*.rpm release-staging/
+          ls -lh release-staging/
 
-      - name: Publish Windows NSIS, MSI & portable .exe to GitHub Release (on v* tag)
-        if: startsWith(github.ref, 'refs/tags/v') && matrix.platform == 'windows-latest'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Stage Windows portable .exe, NSIS & MSI bundles
+        if: matrix.platform == 'windows-latest'
         shell: pwsh
         run: |
-          gh release view "${{ github.ref_name }}" 2>$null | Out-Null
-          if ($LASTEXITCODE -ne 0) {
-            gh release create "${{ github.ref_name }}" `
-              --title "TwilightLauncher ${{ github.ref_name }}" `
-              --notes "Ultra-lightweight monotone Minecraft: Java Edition launcher (Windows & Linux)." 2>$null
-          }
-          if (Test-Path "target/release/twilight-launcher.exe") {
-            Copy-Item "target/release/twilight-launcher.exe" "TwilightLauncher-portable-x64.exe" -Force
-          }
-          $files = @()
-          $files += Get-ChildItem "TwilightLauncher-portable-x64.exe" -ErrorAction SilentlyContinue
-          $files += Get-ChildItem "target/release/bundle/nsis/*.exe" -ErrorAction SilentlyContinue
-          $files += Get-ChildItem "target/release/bundle/msi/*.msi" -ErrorAction SilentlyContinue
-          foreach ($f in $files) {
-            gh release upload "${{ github.ref_name }}" $f.FullName --clobber
-          }
+          New-Item -ItemType Directory -Force -Path release-staging | Out-Null
+          Copy-Item "target/release/twilight-launcher.exe" "release-staging/TwilightLauncher-portable-x64.exe" -Force
+          Copy-Item "target/release/bundle/nsis/*.exe" "release-staging/" -Force
+          Copy-Item "target/release/bundle/msi/*.msi" "release-staging/" -Force
+          Get-ChildItem release-staging | Format-Table Name, Length
+
+      - name: Upload built bundles artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: release-staging/*
+          if-no-files-found: error
+
+  publish-release:
+    name: Publish GitHub Release
+    if: github.ref == 'refs/heads/main'
+    needs: build-desktop
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Checkout repository metadata
+        uses: actions/checkout@v4
+
+      - name: Download Linux & Windows release bundles
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Create or update GitHub Release and upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          VERSION="$(jq -r '.version' src-tauri/tauri.conf.json)"
+          TAG="v${VERSION}"
+          cd release-assets
+          files=(*)
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "No release assets found in release-assets/" >&2
+            exit 1
+          fi
+          ls -lh -- "${files[@]}"
+          sha256sum -- "${files[@]}" > SHA256SUMS.txt
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" --clobber -- "${files[@]}" SHA256SUMS.txt
+            gh release edit "${TAG}" --title "TwilightLauncher ${TAG}" --draft=false --latest
+          else
+            gh release create "${TAG}" \
+              --target "${GITHUB_SHA}" \
+              --title "TwilightLauncher ${TAG}" \
+              --generate-notes \
+              --latest \
+              -- "${files[@]}" SHA256SUMS.txt
+          fi

@@ -44,8 +44,6 @@ pub struct LinuxGamingConfig {
 pub struct TwilightShieldConfig {
     /// Never pass real Microsoft session tokens to the JVM; broker joins via 127.0.0.1
     pub token_vault: bool,
-    /// Confine the JVM to the profile directory via OS sandbox (Linux bubblewrap / Windows ACLs)
-    pub os_sandbox: bool,
     /// Scan .jar constant pools in Rust before launch & when importing files
     pub jar_scanner: bool,
     /// Block launch automatically when High/Critical malware signatures are detected
@@ -56,7 +54,6 @@ impl Default for TwilightShieldConfig {
     fn default() -> Self {
         Self {
             token_vault: true,
-            os_sandbox: true,
             jar_scanner: true,
             block_high_risk_jars: true,
         }
@@ -74,6 +71,9 @@ pub struct LauncherSettings {
     pub restore_on_game_close: bool,
     /// Strict monotone theme (Pure Dark or Crisp Paper Light).
     pub theme: MonotoneTheme,
+    pub accent_color: Option<String>,
+    pub background_image: Option<String>,
+    pub background_blur: u8,
     /// Default memory allocation for newly created profiles (MB).
     pub default_memory_mb: u32,
     /// Concurrent HTTP download workers.
@@ -82,7 +82,7 @@ pub struct LauncherSettings {
     pub global_jvm_args: Vec<String>,
     /// Linux-specific gaming performance & GPU toggles.
     pub linux_gaming: LinuxGamingConfig,
-    /// Twilight Shield 3-layer security engine (Token Vault, OS Sandbox, Rust JAR Scanner).
+    /// Twilight Shield settings for the Token Vault and Rust JAR scanner.
     pub shield: TwilightShieldConfig,
 }
 
@@ -93,6 +93,9 @@ impl Default for LauncherSettings {
             auto_fullscreen: false,
             restore_on_game_close: true,
             theme: MonotoneTheme::Dark,
+            accent_color: None,
+            background_image: None,
+            background_blur: 0,
             default_memory_mb: 4096,
             concurrent_downloads: 24,
             global_jvm_args: vec![
@@ -154,7 +157,6 @@ pub struct Profile {
     pub auto_update_loader: bool,
     pub allocated_ram_mb: u32,
     pub fullscreen_override: Option<bool>,
-    pub sandbox_override: Option<bool>,
     pub custom_jvm_args: Vec<String>,
     pub created_at: String,
     pub last_played: Option<String>,
@@ -175,7 +177,6 @@ impl Default for Profile {
             auto_update_loader: true,
             allocated_ram_mb: 4096,
             fullscreen_override: None,
-            sandbox_override: None,
             custom_jvm_args: Vec::new(),
             created_at: chrono::Utc::now().to_rfc3339(),
             last_played: None,
@@ -293,6 +294,8 @@ pub struct FileNode {
     pub size_bytes: u64,
     pub modified_at: String,
     pub editable_config: bool,
+    #[serde(default)]
+    pub readable_log: bool,
     pub is_archive: bool,
 }
 

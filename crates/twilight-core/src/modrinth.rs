@@ -12,9 +12,10 @@ use crate::paths::LauncherPaths;
 
 const MODRINTH_API_V2: &str = "https://api.modrinth.com/v2";
 
-#[derive(Debug, Deserialize)]
-struct ModrinthSearchResponse {
-    hits: Vec<ModrinthSearchHit>,
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ModrinthSearchResponse {
+    pub hits: Vec<ModrinthSearchHit>,
+    pub total_hits: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,7 +77,8 @@ pub async fn search_modrinth(
     mc_version: Option<&str>,
     loader: Option<ModLoaderKind>,
     limit: u32,
-) -> Result<Vec<ModrinthSearchHit>> {
+    offset: u32,
+) -> Result<ModrinthSearchResponse> {
     let project_type = match kind {
         ModrinthContentKind::Mod => "mod",
         ModrinthContentKind::Modpack => "modpack",
@@ -108,6 +110,7 @@ pub async fn search_modrinth(
             ("query", query),
             ("facets", facets_json.as_str()),
             ("limit", &limit.to_string()),
+            ("offset", &offset.to_string()),
         ])
         .send()
         .await
@@ -116,7 +119,7 @@ pub async fn search_modrinth(
         .json()
         .await?;
 
-    Ok(resp.hits)
+    Ok(resp)
 }
 
 pub async fn fetch_compatible_versions(
@@ -450,7 +453,6 @@ pub async fn install_modpack_as_new_profile(
         auto_update_loader: false,
         allocated_ram_mb: default_ram_mb,
         fullscreen_override: None,
-        sandbox_override: None,
         custom_jvm_args: Vec::new(),
         created_at: chrono::Utc::now().to_rfc3339(),
         last_played: None,

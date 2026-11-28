@@ -11,10 +11,9 @@
 - **On-Launch Action:** Default = **Minimize on Launch** (user-configurable: Keep Open, Minimize, Minimize to System Tray, Close Launcher + Restore on Game Exit).
 - **Auto-Enable Fullscreen:** Default = **OFF** (user-configurable toggle passing `--fullscreen`).
 
-## 3. Twilight Shield (3-Layer Mod Malware Confinement)
+## 3. Twilight Shield
 1. **Native Session Token Vault:** Never passes real Microsoft `accessToken` into the JVM; uses a random placeholder token and brokers `/session/minecraft/join` over `127.0.0.1` in Rust.
-2. **OS Filesystem Sandbox:** Confines JVM read-write strictly to `instances/<profile>/` via `bubblewrap` (`bwrap`) on Linux and AppContainer/Restricted ACLs on Windows, hiding `$HOME`, `.ssh`, Chrome/Firefox cookies & passwords, Discord tokens, and wallets with ~0% FPS overhead.
-3. **Fast Rust `.jar` Threat Scanner:** Scans `.class` Constant Pool UTF-8 entries in milliseconds before launch and on file upload to flag exfiltration webhooks, browser credential theft, and shell execution.
+2. **Fast Rust `.jar` Threat Scanner:** Scans `.class` Constant Pool UTF-8 entries in milliseconds before launch and on file upload to flag exfiltration webhooks, browser credential theft, and shell execution.
 
 ## 4. Accounts, Skins, Capes & Wardrobe History
 - Multiple accounts saved simultaneously with 1-click switching.

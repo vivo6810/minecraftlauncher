@@ -37,11 +37,13 @@ import {
   type Profile,
   type ScreenshotItem,
 } from "../types/launcher";
+import { LiveLogs } from "./LiveLogs";
 import { ModrinthBrowser } from "./ModrinthBrowser";
 
 interface Props {
   profile: Profile;
   allProfiles: Profile[];
+  logLines: readonly string[];
   initialTab?: string;
   mcVersions: MinecraftVersionEntry[];
   onBack: () => void;
@@ -55,6 +57,7 @@ interface Props {
 const TABS = [
   { id: "overview", label: "General", icon: Sliders },
   { id: "modrinth", label: "Modrinth", icon: Compass },
+  { id: "logs", label: "Live Logs", icon: FileCode },
   { id: "files", label: "Files", icon: FolderOpen },
   { id: "screenshots", label: "Screenshots", icon: ImageIcon },
   { id: "shield", label: "Security", icon: Shield },
@@ -63,6 +66,7 @@ const TABS = [
 export const ProfileWorkspace: React.FC<Props> = ({
   profile,
   allProfiles,
+  logLines,
   initialTab = "overview",
   mcVersions,
   onBack,
@@ -80,6 +84,7 @@ export const ProfileWorkspace: React.FC<Props> = ({
   const [currentDir, setCurrentDir] = useState("");
   const [entries, setEntries] = useState<FileNode[]>([]);
   const [editingPath, setEditingPath] = useState<string | null>(null);
+  const [editingReadOnly, setEditingReadOnly] = useState(false);
   const [editingContent, setEditingContent] = useState("");
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -135,13 +140,26 @@ export const ProfileWorkspace: React.FC<Props> = ({
   };
 
   useEffect(() => {
-    if (tab === "files") {
-      void refreshDir(currentDir);
-    } else if (tab === "screenshots") {
-      LauncherBridge.listProfileScreenshots(profile.id).then(setScreenshots);
-    } else if (tab === "shield") {
-      LauncherBridge.scanProfileMods(profile.id).then(setJarReports);
-    }
+    let current = true;
+    const loadTab = async () => {
+      try {
+        if (tab === "files") {
+          setEntries([]);
+          const list = await LauncherBridge.listDir(profile.id, currentDir);
+          if (current) setEntries(list);
+        } else if (tab === "screenshots") {
+          const list = await LauncherBridge.listProfileScreenshots(profile.id);
+          if (current) setScreenshots(list);
+        } else if (tab === "shield") {
+          const reports = await LauncherBridge.scanProfileMods(profile.id);
+          if (current) setJarReports(reports);
+        }
+      } catch (err) {
+        if (current) onToast(String(err));
+      }
+    };
+    void loadTab();
+    return () => { current = false; };
   }, [tab, currentDir, profile.id]);
 
   const visibleVersions = mcVersions.filter(
@@ -153,35 +171,49 @@ export const ProfileWorkspace: React.FC<Props> = ({
     if (!file) return;
     const reader = new FileReader();
     reader.onload = async () => {
-      const b64 = String(reader.result || "");
-      const scan = await LauncherBridge.uploadFile(
-        profile.id,
-        currentDir,
-        file.name,
-        b64
-      );
-      await refreshDir(currentDir);
-      if (scan && !scan.safe) {
-        onToast(`Flagged: ${file.name}`);
-      } else {
-        onToast(`Added ${file.name}`);
+      try {
+        const b64 = String(reader.result || "");
+        const scan = await LauncherBridge.uploadFile(
+          profile.id,
+          currentDir,
+          file.name,
+          b64
+        );
+        await refreshDir(currentDir);
+        if (scan && !scan.safe) {
+          onToast(`Flagged: ${file.name}`);
+        } else {
+          onToast(`Added ${file.name}`);
+        }
+      } catch (err) {
+        onToast(String(err));
       }
     };
+    reader.onerror = () => onToast(`Couldn't read ${file.name}`);
     reader.readAsDataURL(file);
     e.target.value = "";
   };
 
-  const openConfigEditor = async (node: FileNode) => {
-    const txt = await LauncherBridge.readConfigText(profile.id, node.relative_path);
-    setEditingPath(node.relative_path);
-    setEditingContent(txt);
+  const openConfigEditor = async (node: FileNode, readOnly = false) => {
+    try {
+      const txt = await LauncherBridge.readConfigText(profile.id, node.relative_path);
+      setEditingReadOnly(readOnly);
+      setEditingPath(node.relative_path);
+      setEditingContent(txt);
+    } catch (err) {
+      onToast(String(err));
+    }
   };
 
   const saveConfigEditor = async () => {
-    if (!editingPath) return;
-    await LauncherBridge.writeConfigText(profile.id, editingPath, editingContent);
-    onToast(`Saved ${editingPath}`);
-    await refreshDir(currentDir);
+    if (!editingPath || editingReadOnly) return;
+    try {
+      await LauncherBridge.writeConfigText(profile.id, editingPath, editingContent);
+      onToast(`Saved ${editingPath}`);
+      await refreshDir(currentDir);
+    } catch (err) {
+      onToast(String(err));
+    }
   };
 
   const copyScreenshotToClipboard = async (shot: ScreenshotItem) => {
@@ -208,7 +240,10 @@ export const ProfileWorkspace: React.FC<Props> = ({
     if (trimmed !== profile.name) {
       submittedNameRef.current = trimmed;
       setNameDraft(trimmed);
-      void onSaveProfile({ ...profile, name: trimmed });
+      void onSaveProfile({ ...profile, name: trimmed }).catch((err) => {
+        submittedNameRef.current = null;
+        onToast(String(err));
+      });
     }
   };
 
@@ -276,13 +311,13 @@ export const ProfileWorkspace: React.FC<Props> = ({
             whileHover={{ scale: 1.04 }}
             whileTap={{ scale: 0.93 }}
             onClick={() => onLaunch(profile)}
-            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-fg text-bg text-xs font-semibold"
+            className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl bg-accent text-accent-fg text-xs font-semibold"
           >
             <Play className="w-3.5 h-3.5 fill-current" /> Play
           </motion.button>
         </div>
 
-        <div className="flex flex-wrap gap-1.5 mt-4 pt-4 border-t border-border/70">
+        <div className="flex flex-wrap gap-1.5 mt-4 pt-2">
           {TABS.map((t) => {
             const Icon = t.icon;
             const active = tab === t.id;
@@ -291,15 +326,16 @@ export const ProfileWorkspace: React.FC<Props> = ({
                 key={t.id}
                 type="button"
                 onClick={() => setTab(t.id)}
+                aria-pressed={active}
                 className={`relative px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-2 transition-colors ${
-                  active ? "text-bg" : "text-muted hover:text-fg"
+                  active ? "text-fg" : "text-muted hover:text-fg"
                 }`}
               >
                 {active && (
                   <motion.div
                     layoutId="profileDetailSubtab"
                     transition={BOUNCE_SPRING}
-                    className="absolute inset-0 bg-fg rounded-xl"
+                    className="absolute inset-0 bg-elevated rounded-xl"
                   />
                 )}
                 <Icon className="w-3.5 h-3.5 relative z-10" />
@@ -310,6 +346,11 @@ export const ProfileWorkspace: React.FC<Props> = ({
         </div>
       </div>
 
+      <div key={tab} className="launcher-tab-content">
+      {tab === "logs" && <LiveLogs lines={logLines} onOpenFolder={() => {
+        setCurrentDir("logs");
+        setTab("files");
+      }} />}
       {/* GENERAL */}
       {tab === "overview" && (
         <div className="max-w-3xl rounded-2xl bg-surface border border-border divide-y divide-border">
@@ -560,7 +601,8 @@ export const ProfileWorkspace: React.FC<Props> = ({
                       type="button"
                       onClick={() => {
                         if (node.is_dir) setCurrentDir(node.relative_path);
-                        else if (node.editable_config) void openConfigEditor(node);
+                        else if (node.editable_config) void openConfigEditor(node, false);
+                        else if (node.readable_log) void openConfigEditor(node, true);
                       }}
                       className="flex items-center gap-2.5 min-w-0 text-left flex-1"
                     >
@@ -576,10 +618,19 @@ export const ProfileWorkspace: React.FC<Props> = ({
                       {node.editable_config && (
                         <button
                           type="button"
-                          onClick={() => void openConfigEditor(node)}
+                          onClick={() => void openConfigEditor(node, false)}
                           className="px-2.5 py-1 rounded-lg bg-elevated border border-border text-[11px]"
                         >
                           Edit
+                        </button>
+                      )}
+                      {node.readable_log && (
+                        <button
+                          type="button"
+                          onClick={() => void openConfigEditor(node, true)}
+                          className="px-2.5 py-1 rounded-lg bg-elevated border border-border text-[11px]"
+                        >
+                          View
                         </button>
                       )}
                       {node.is_archive && (
@@ -618,22 +669,34 @@ export const ProfileWorkspace: React.FC<Props> = ({
 
           {editingPath && (
             <div className="lg:col-span-6 p-4 rounded-2xl bg-surface border border-border flex flex-col space-y-3">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-mono font-semibold truncate">
-                  {editingPath}
-                </span>
-                <div className="flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => void saveConfigEditor()}
-                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-fg text-bg text-xs font-medium"
-                  >
-                    <Save className="w-3.5 h-3.5" /> Save
-                  </button>
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-xs font-mono font-semibold truncate">
+                    {editingPath}
+                  </span>
+                  {editingReadOnly && (
+                    <span className="shrink-0 rounded bg-elevated px-1.5 py-0.5 font-mono text-[10px] text-muted">
+                      Read-only
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-2 shrink-0">
+                  {!editingReadOnly && (
+                    <button
+                      type="button"
+                      onClick={() => void saveConfigEditor()}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-fg text-bg text-xs font-medium"
+                    >
+                      <Save className="w-3.5 h-3.5" /> Save
+                    </button>
+                  )}
                   <button
                     type="button"
                     aria-label="Close editor"
-                    onClick={() => setEditingPath(null)}
+                    onClick={() => {
+                      setEditingPath(null);
+                      setEditingReadOnly(false);
+                    }}
                     className="p-1.5 rounded-lg bg-elevated"
                   >
                     <X className="w-3.5 h-3.5" />
@@ -642,7 +705,10 @@ export const ProfileWorkspace: React.FC<Props> = ({
               </div>
               <textarea
                 value={editingContent}
-                onChange={(e) => setEditingContent(e.target.value)}
+                readOnly={editingReadOnly}
+                onChange={(e) => {
+                  if (!editingReadOnly) setEditingContent(e.target.value);
+                }}
                 rows={14}
                 className="w-full flex-1 font-mono text-xs p-3 rounded-xl bg-elevated border border-border text-fg focus:outline-none focus:border-fg"
               />
@@ -893,6 +959,7 @@ export const ProfileWorkspace: React.FC<Props> = ({
           </div>
         </div>
       )}
+      </div>
     </div>
   );
 };

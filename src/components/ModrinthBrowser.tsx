@@ -1,9 +1,11 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   ArrowLeft,
   Check,
+  ChevronLeft,
+  ChevronRight,
   Download,
   Globe,
   Layers,
@@ -14,7 +16,7 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
-import { LauncherBridge } from "../lib/bridge";
+import { LauncherBridge, MODRINTH_PAGE_SIZE } from "../lib/bridge";
 import {
   BOUNCE_SPRING,
   ELASTIC_SPRING,
@@ -50,8 +52,13 @@ export const ModrinthBrowser: React.FC<Props> = ({
 }) => {
   const [kind, setKind] = useState<ModrinthContentKind>("mod");
   const [query, setQuery] = useState("");
+  const [page, setPage] = useState(0);
+  const [totalHits, setTotalHits] = useState(0);
+  const resultsTop = useRef<HTMLDivElement>(null);
   const [hits, setHits] = useState<ModrinthSearchHit[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const worldRequest = useRef(0);
 
   const [pendingItem, setPendingItem] = useState<ModrinthSearchHit | null>(null);
   const [selectedProfileId, setSelectedProfileId] = useState<string>("");
@@ -63,14 +70,24 @@ export const ModrinthBrowser: React.FC<Props> = ({
 
   useEffect(() => {
     let cancelled = false;
+    setLoading(true);
+    setSearchError(null);
     const run = async () => {
-      setLoading(true);
       try {
         const mcVer = scopedProfile && kind !== "modpack" ? scopedProfile.mc_version : null;
         const ldr: ModLoaderKind | null =
           scopedProfile && kind === "mod" ? scopedProfile.loader : null;
-        const results = await LauncherBridge.searchModrinth(query, kind, mcVer, ldr);
-        if (!cancelled) setHits(results);
+        const results = await LauncherBridge.searchModrinth(query, kind, mcVer, ldr, page * MODRINTH_PAGE_SIZE);
+        if (cancelled) return;
+        setHits(results.hits);
+        setTotalHits(results.total_hits);
+        const lastPage = Math.max(0, Math.ceil(results.total_hits / MODRINTH_PAGE_SIZE) - 1);
+        if (page > lastPage) setPage(lastPage);
+      } catch (err) {
+        if (!cancelled) {
+          setHits([]);
+          setSearchError(String(err));
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -80,13 +97,21 @@ export const ModrinthBrowser: React.FC<Props> = ({
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [query, kind, scopedProfile]);
+  }, [query, kind, page, scopedProfile]);
 
   const loadWorldsForProfile = async (profId: string) => {
-    const worlds = await LauncherBridge.listProfileWorlds(profId);
-    setAvailableWorlds(worlds);
-    setChosenWorlds(worlds.slice(0, 1));
+    const request = ++worldRequest.current;
+    setAvailableWorlds([]);
+    setChosenWorlds([]);
     setDatapackMode("all_worlds");
+    try {
+      const worlds = await LauncherBridge.listProfileWorlds(profId);
+      if (worldRequest.current !== request) return;
+      setAvailableWorlds(worlds);
+      setChosenWorlds(worlds.slice(0, 1));
+    } catch (err) {
+      if (worldRequest.current === request) onToast(String(err));
+    }
   };
 
   const isProfileCompatible = (
@@ -195,7 +220,8 @@ export const ModrinthBrowser: React.FC<Props> = ({
 
   const handleCreateQuickCompatibleProfile = async () => {
     if (!pendingItem) return;
-    const mcVer = pendingItem.versions.find((v) => v.startsWith("1.")) || "1.21.4";
+    const mcVer = pendingItem.versions.find((v) => /^\d+\.\d+(?:\.\d+)?$/.test(v)) ??
+      pendingItem.versions[0] ?? "26.3";
     const inferredLoader: ModLoaderKind =
       kind === "mod"
         ? (["fabric", "neoforge", "quilt", "forge"].find((l) =>
@@ -214,20 +240,41 @@ export const ModrinthBrowser: React.FC<Props> = ({
       auto_update_loader: true,
       allocated_ram_mb: 4096,
       fullscreen_override: null,
-      sandbox_override: null,
       custom_jvm_args: [],
       created_at: new Date().toISOString(),
       last_played: null,
       total_playtime_secs: 0,
       linked_modpack_id: null,
     };
-    const updated = await LauncherBridge.upsertProfile(created);
-    onProfilesChanged(updated);
-    setSelectedProfileId(created.id);
-    if (kind === "datapack") {
-      await loadWorldsForProfile(created.id);
+    try {
+      const updated = await LauncherBridge.upsertProfile(created);
+      onProfilesChanged(updated);
+      setSelectedProfileId(created.id);
+      if (kind === "datapack") await loadWorldsForProfile(created.id);
+    } catch (err) {
+      onToast(String(err));
     }
   };
+
+  const pageCount = Math.max(1, Math.ceil(totalHits / MODRINTH_PAGE_SIZE));
+  const changePage = (next: number) => {
+    setLoading(true);
+    setPage(next);
+    resultsTop.current?.scrollIntoView({ block: "nearest" });
+  };
+  const pagination = (label: string) => (
+    <nav aria-label={label} className="flex w-full items-center justify-between gap-1.5 text-xs sm:w-fit sm:gap-3">
+      <button type="button" aria-label="Previous page" disabled={loading || page === 0}
+        onClick={() => changePage(page - 1)} className="inline-flex min-h-11 items-center gap-1 rounded-xl bg-elevated px-2 disabled:opacity-40 sm:px-3">
+        <ChevronLeft size={14} aria-hidden="true" /> Prev
+      </button>
+      <span aria-live="polite" className="text-center tabular-nums text-muted">Page {page + 1} of {pageCount}</span>
+      <button type="button" aria-label="Next page" disabled={loading || page + 1 >= pageCount}
+        onClick={() => changePage(page + 1)} className="inline-flex min-h-11 items-center gap-1 rounded-xl bg-elevated px-2 disabled:opacity-40 sm:px-3">
+        Next <ChevronRight size={14} aria-hidden="true" />
+      </button>
+    </nav>
+  );
 
   return (
     <div className="space-y-5">
@@ -244,28 +291,35 @@ export const ModrinthBrowser: React.FC<Props> = ({
             <ArrowLeft className="w-4 h-4" />
           </motion.button>
         )}
-        <h2 className="text-lg font-semibold tracking-tight">Modrinth</h2>
+        <h2 className="launcher-heading text-3xl">Modrinth</h2>
       </div>
 
       {/* Category Tabs + Search */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div className="inline-flex p-1 rounded-2xl bg-surface border border-border gap-1">
+        <div className="flex max-w-full flex-wrap gap-1 rounded-2xl bg-surface p-1">
           {CONTENT_TABS.map((tab) => {
             const active = kind === tab.id;
             return (
               <button
                 key={tab.id}
                 type="button"
-                onClick={() => setKind(tab.id)}
+                onClick={() => {
+                  if (active) return;
+                  setLoading(true);
+                  setPage(0);
+                  setTotalHits(0);
+                  setKind(tab.id);
+                }}
+                aria-pressed={active}
                 className={`relative px-3.5 py-1.5 text-xs font-medium rounded-xl transition-colors ${
-                  active ? "text-bg" : "text-muted hover:text-fg"
+                  active ? "text-fg" : "text-muted hover:text-fg"
                 }`}
               >
                 {active && (
                   <motion.div
                     layoutId={scopedProfile ? "modrinthTabScoped" : "modrinthTabGlobal"}
                     transition={BOUNCE_SPRING}
-                    className="absolute inset-0 bg-fg rounded-xl"
+                    className="absolute inset-0 bg-elevated rounded-xl"
                   />
                 )}
                 <span className="relative z-10">{tab.label}</span>
@@ -274,15 +328,24 @@ export const ModrinthBrowser: React.FC<Props> = ({
           })}
         </div>
 
-        <div className="relative flex-1 min-w-[220px] max-w-sm">
+        <div className="relative w-full sm:flex-1 sm:min-w-[220px] sm:max-w-sm">
           <Search className="w-4 h-4 text-muted absolute left-3.5 top-1/2 -translate-y-1/2" />
           <input
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => {
+              setLoading(true);
+              setPage(0);
+              setTotalHits(0);
+              setQuery(e.target.value);
+            }}
             placeholder="Search..."
             className="w-full pl-9 pr-4 py-2 text-xs rounded-xl bg-surface border border-border text-fg placeholder:text-muted focus:outline-none focus:border-fg"
           />
         </div>
+      </div>
+
+      <div ref={resultsTop}>
+        {pageCount > 1 && pagination("Modrinth result pages")}
       </div>
 
       {/* Results Grid (Original Colorful Icons Preserved) */}
@@ -290,6 +353,12 @@ export const ModrinthBrowser: React.FC<Props> = ({
         <div className="py-16 flex items-center justify-center text-muted">
           <Loader2 className="w-5 h-5 animate-spin" />
         </div>
+      ) : searchError ? (
+        <p role="alert" className="rounded-2xl border border-border bg-surface p-4 text-sm">
+          Modrinth search failed. {searchError}
+        </p>
+      ) : hits.length === 0 ? (
+        <p className="rounded-2xl border border-border bg-surface p-4 text-sm text-muted">No results found.</p>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {hits.map((hit) => (
@@ -300,7 +369,7 @@ export const ModrinthBrowser: React.FC<Props> = ({
               animate={{ opacity: 1, y: 0 }}
               whileHover={{ y: -2 }}
               transition={ELASTIC_SPRING}
-              className="p-4 rounded-2xl bg-surface border border-border flex items-start justify-between gap-4"
+              className="p-4 rounded-2xl bg-surface hover:bg-elevated flex items-start justify-between gap-4"
             >
               <div className="flex items-start gap-3.5 min-w-0">
                 {hit.icon_url ? (
@@ -357,6 +426,8 @@ export const ModrinthBrowser: React.FC<Props> = ({
           ))}
         </div>
       )}
+
+      {!loading && hits.length > 0 && pageCount > 1 && pagination("Modrinth result pages bottom")}
 
       {/* Full-Viewport Portal Modal with Full-Screen Blur */}
       {typeof document !== "undefined" &&

@@ -112,7 +112,7 @@ pub async fn spawn_local_yggdrasil_skin_server(
                         "meta": {
                             "serverName": "TwilightLauncher Local Wardrobe",
                             "implementationName": "twilight-yggdrasil-local",
-                            "implementationVersion": "0.1.0"
+                            "implementationVersion": "1.0.1"
                         },
                         "skinDomains": ["127.0.0.1", "localhost"]
                     });

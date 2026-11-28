@@ -1,0 +1,33 @@
+.squish-switch {
+  display: inline-grid;
+  place-items: center;
+  width: 48px;
+  min-height: 32px;
+  touch-action: pan-y;
+  user-select: none;
+  cursor: pointer;
+  border-radius: 999px;
+}
+.squish-switch[data-held] { cursor: grabbing; }
+.squish-switch__track {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  border-radius: 999px;
+  background: var(--tw-elevated);
+  transition: background-color 320ms ease;
+}
+.squish-switch__thumb {
+  position: absolute;
+  inset: 3px auto auto 3px;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--tw-muted);
+  transition: background-color 320ms ease;
+}
+.squish-switch[data-on] .squish-switch__track { background: rgb(var(--tw-accent-rgb) / .25); }
+.squish-switch[data-on] .squish-switch__thumb { background: var(--tw-accent); }
+@media (prefers-reduced-motion: reduce) {
+  .squish-switch__track, .squish-switch__thumb { transition: none; }
+}

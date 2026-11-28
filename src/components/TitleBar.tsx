@@ -36,18 +36,13 @@ export const TitleBar: React.FC = () => {
   return (
     <header
       onMouseDown={handleDragMouseDown}
-      className="h-9 shrink-0 w-full bg-surface border-b border-border flex items-center justify-between pl-3.5 pr-1 select-none z-40"
+      className="h-9 shrink-0 w-full bg-bg flex items-center justify-between pl-3.5 pr-1 select-none z-40"
     >
-      <div className="flex items-center gap-2 pointer-events-none">
-        <div className="w-4 h-4 rounded bg-fg text-bg flex items-center justify-center font-mono font-black text-[9px]">
-          TL
-        </div>
-        <span className="text-xs font-semibold tracking-tight text-fg">
-          TwilightLauncher
-        </span>
-      </div>
+      <span className="launcher-heading pointer-events-none text-sm font-semibold">
+        Twilight Launcher
+      </span>
 
-      <div className="flex items-center gap-0.5">
+      {isTauriDesktop() && <div className="flex items-center gap-0.5">
         <button
           type="button"
           aria-label="Minimize window"
@@ -72,7 +67,7 @@ export const TitleBar: React.FC = () => {
         >
           <X className="w-3.5 h-3.5" />
         </button>
-      </div>
+      </div>}
     </header>
   );
 };

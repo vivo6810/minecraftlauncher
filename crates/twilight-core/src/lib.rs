@@ -11,25 +11,32 @@ pub mod paths;
 pub mod security;
 pub mod yggdrasil_local;
 
-use anyhow::Result;
-use models::{Account, LauncherSettings, LauncherStateSnapshot};
+use anyhow::{Context, Result};
+use std::io::Write;
+use models::{LauncherSettings, LauncherStateSnapshot};
 use paths::LauncherPaths;
 
 pub fn load_or_init_state(paths: &LauncherPaths) -> Result<LauncherStateSnapshot> {
     let state_path = paths.state_file();
     if state_path.exists() {
         let raw = std::fs::read_to_string(&state_path)?;
-        if let Ok(parsed) = serde_json::from_str::<LauncherStateSnapshot>(&raw) {
-            return Ok(parsed);
+        match serde_json::from_str::<LauncherStateSnapshot>(&raw) {
+            Ok(parsed) => return Ok(parsed),
+            Err(_) => {
+                let backup = paths
+                    .root_path()
+                    .join(format!("launcher-state-{}.json", uuid::Uuid::new_v4()));
+                std::fs::copy(&state_path, &backup).with_context(|| {
+                    format!("Backing up unreadable launcher state to {}", backup.display())
+                })?;
+            }
         }
     }
-
-    let default_account: Account = auth::create_offline_account("Player");
 
     let initial = LauncherStateSnapshot {
         settings: LauncherSettings::default(),
         profiles: Vec::new(),
-        accounts: vec![default_account],
+        accounts: Vec::new(),
         wardrobe: Vec::new(),
     };
     save_state(paths, &initial)?;
@@ -37,8 +44,12 @@ pub fn load_or_init_state(paths: &LauncherPaths) -> Result<LauncherStateSnapshot
 }
 
 pub fn save_state(paths: &LauncherPaths, snapshot: &LauncherStateSnapshot) -> Result<()> {
-    let json = serde_json::to_string_pretty(snapshot)?;
-    std::fs::write(paths.state_file(), json)?;
+    let state_path = paths.state_file();
+    let mut pending = tempfile::NamedTempFile::new_in(paths.root_path())?;
+    serde_json::to_writer_pretty(&mut pending, snapshot)?;
+    pending.flush()?;
+    pending.as_file().sync_all()?;
+    pending.persist(state_path)?;
     Ok(())
 }
 
@@ -46,7 +57,44 @@ pub fn save_state(paths: &LauncherPaths, snapshot: &LauncherStateSnapshot) -> Re
 mod tests {
     use super::*;
     use crate::models::{ModLoaderKind, SkinVariant, WardrobeAssetKind, WindowLaunchAction};
-    use std::io::Write;
+
+    #[test]
+    fn saved_profiles_with_retired_settings_still_load() {
+        let settings: LauncherSettings = serde_json::from_value(serde_json::json!({
+            "shield": { "os_sandbox": true, "jar_scanner": false }
+        })).unwrap();
+        let profile: models::Profile = serde_json::from_value(serde_json::json!({
+            "id": "existing-profile", "sandbox_override": true
+        })).unwrap();
+
+        assert_eq!(profile.id, "existing-profile");
+        assert!(!settings.shield.jar_scanner);
+        let saved_settings = serde_json::to_value(settings).unwrap();
+        let saved_profile = serde_json::to_value(profile).unwrap();
+        assert!(saved_settings["shield"].get("os_sandbox").is_none());
+        assert!(saved_profile.get("sandbox_override").is_none());
+    }
+
+    #[test]
+    fn unreadable_state_is_preserved_before_recovery() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = LauncherPaths::from_root(root.path().to_path_buf()).unwrap();
+        std::fs::write(paths.state_file(), b"{truncated").unwrap();
+
+        let mut fresh = load_or_init_state(&paths).unwrap();
+        assert!(fresh.profiles.is_empty());
+        let backups: Vec<_> = std::fs::read_dir(root.path())
+            .unwrap()
+            .filter_map(std::result::Result::ok)
+            .filter(|entry| entry.file_name().to_string_lossy().starts_with("launcher-state-"))
+            .collect();
+        assert_eq!(backups.len(), 1);
+        assert_eq!(std::fs::read(backups[0].path()).unwrap(), b"{truncated");
+
+        fresh.settings.default_memory_mb = 8192;
+        save_state(&paths, &fresh).unwrap();
+        assert_eq!(load_or_init_state(&paths).unwrap().settings.default_memory_mb, 8192);
+    }
 
     #[test]
     fn default_settings_match_user_spec() {
@@ -54,7 +102,6 @@ mod tests {
         assert_eq!(settings.window_launch_action, WindowLaunchAction::Minimize);
         assert!(!settings.auto_fullscreen);
         assert!(settings.shield.token_vault);
-        assert!(settings.shield.os_sandbox);
         assert!(settings.shield.jar_scanner);
     }
 
@@ -67,11 +114,12 @@ mod tests {
     }
 
     #[test]
-    fn fresh_state_has_no_default_profiles() {
+    fn fresh_state_has_no_default_profiles_or_accounts() {
         let temp = tempfile::tempdir().unwrap();
         let paths = LauncherPaths::from_root(temp.path().to_path_buf()).unwrap();
         let state = load_or_init_state(&paths).unwrap();
         assert!(state.profiles.is_empty());
+        assert!(state.accounts.is_empty());
     }
 
     #[test]
@@ -189,5 +237,31 @@ mod tests {
         assert_eq!(quilt[0], "0.31.0-rc.1");
         assert_eq!(quilt[1], "0.31.0-beta.6");
         assert_eq!(quilt[2], "0.30.2");
+    }
+
+    #[test]
+    fn log_files_are_read_only_and_distinct_from_editable_configs() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = LauncherPaths::from_root(temp.path().to_path_buf()).unwrap();
+        let prof_dir = paths.ensure_profile_layout("prof-logs").unwrap();
+        std::fs::write(prof_dir.join("logs/latest.log"), b"[main/INFO]: Ready \xff\n").unwrap();
+        std::fs::write(prof_dir.join("options.txt"), b"fov:0.0\n").unwrap();
+
+        let log_nodes = files::list_profile_directory(&paths, "prof-logs", "logs").unwrap();
+        assert_eq!(log_nodes.len(), 1);
+        assert!(!log_nodes[0].editable_config);
+        assert!(log_nodes[0].readable_log);
+
+        let root_nodes = files::list_profile_directory(&paths, "prof-logs", "").unwrap();
+        let opts = root_nodes.iter().find(|n| n.name == "options.txt").unwrap();
+        assert!(opts.editable_config);
+        assert!(!opts.readable_log);
+
+        let read_log = files::read_profile_text_file(&paths, "prof-logs", "logs/latest.log").unwrap();
+        assert!(read_log.contains("[main/INFO]: Ready"));
+        assert!(files::write_profile_text_file(&paths, "prof-logs", "logs/latest.log", "overwrite").is_err());
+
+        std::fs::write(prof_dir.join("corrupt.cfg"), b"x=\xe9\n").unwrap();
+        assert!(files::read_profile_text_file(&paths, "prof-logs", "corrupt.cfg").is_err());
     }
 }

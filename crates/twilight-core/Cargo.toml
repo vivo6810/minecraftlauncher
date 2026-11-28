@@ -25,6 +25,4 @@ chrono.workspace = true
 directories.workspace = true
 futures-util.workspace = true
 walkdir.workspace = true
-
-[dev-dependencies]
 tempfile = "3.12"

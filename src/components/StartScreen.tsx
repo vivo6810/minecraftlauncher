@@ -54,6 +54,8 @@ export const StartScreen: React.FC<Props> = ({
     [mcVersions]
   );
   const [creating, setCreating] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [newVersion, setNewVersion] = useState(releaseVersions[0]?.id ?? "");
   const [newLoader, setNewLoader] = useState<ModLoaderKind>("none");
@@ -71,7 +73,9 @@ export const StartScreen: React.FC<Props> = ({
     Boolean(newVersion) && releaseVersions.some((v) => v.id === newVersion);
 
   const submitNewProfile = async () => {
-    if (!canCreate) return;
+    if (!canCreate || submitting) return;
+    setSubmitting(true);
+    setCreateError(null);
     const created: Profile = {
       id: `prof-${Date.now()}`,
       name: newName.trim() || `Minecraft ${newVersion}`,
@@ -83,23 +87,28 @@ export const StartScreen: React.FC<Props> = ({
       auto_update_loader: true,
       allocated_ram_mb: 4096,
       fullscreen_override: null,
-      sandbox_override: null,
       custom_jvm_args: [],
       created_at: new Date().toISOString(),
       last_played: null,
       total_playtime_secs: 0,
       linked_modpack_id: null,
     };
-    await onCreateProfile(created);
-    setCreating(false);
-    setNewName("");
-    setNewLoader("none");
+    try {
+      await onCreateProfile(created);
+      setCreating(false);
+      setNewName("");
+      setNewLoader("none");
+    } catch (err) {
+      setCreateError(String(err));
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
     <div className="space-y-5">
-      <div className="flex items-center justify-between gap-3">
-        <h1 className="text-lg font-semibold tracking-tight">Profiles</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="launcher-heading text-3xl">Profiles</h1>
 
         <div className="flex items-center gap-2">
           <motion.button
@@ -127,28 +136,8 @@ export const StartScreen: React.FC<Props> = ({
       </div>
 
       {profiles.length === 0 ? (
-        <div className="rounded-2xl border border-dashed border-border bg-surface/40 py-20 px-6 flex flex-col items-center justify-center gap-4 text-center">
+        <div className="rounded-2xl bg-surface py-20 px-6 flex flex-col items-center justify-center gap-4 text-center">
           <span className="text-sm font-medium text-muted">No profiles yet</span>
-          <div className="flex items-center gap-2.5">
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.94 }}
-              onClick={() => setCreating(true)}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-fg text-bg text-xs font-semibold"
-            >
-              <Plus className="w-3.5 h-3.5" /> New Profile
-            </motion.button>
-            <motion.button
-              type="button"
-              whileHover={{ scale: 1.03 }}
-              whileTap={{ scale: 0.94 }}
-              onClick={onOpenUniversalModrinth}
-              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-surface border border-border text-xs font-medium"
-            >
-              <Compass className="w-3.5 h-3.5" /> Modrinth
-            </motion.button>
-          </div>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -159,7 +148,7 @@ export const StartScreen: React.FC<Props> = ({
               whileHover={{ y: -2 }}
               transition={ELASTIC_SPRING}
               onClick={() => onSelectProfile(prof, "overview")}
-              className="cursor-pointer rounded-2xl bg-surface border border-border p-4 flex flex-col justify-between gap-4 hover:border-fg/40 transition-colors"
+              className="cursor-pointer rounded-2xl bg-surface hover:bg-elevated p-4 flex flex-col justify-between gap-4 transition-colors"
             >
               <div className="flex items-center gap-3 min-w-0">
                 <div className="w-10 h-10 rounded-xl bg-elevated border border-border flex items-center justify-center shrink-0">
@@ -178,7 +167,7 @@ export const StartScreen: React.FC<Props> = ({
                 </div>
               </div>
 
-              <div className="flex items-center justify-between gap-2 pt-2 border-t border-border/60">
+              <div className="flex items-center justify-between gap-2 pt-2">
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
@@ -223,7 +212,7 @@ export const StartScreen: React.FC<Props> = ({
                     e.stopPropagation();
                     onLaunchProfile(prof);
                   }}
-                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-fg text-bg text-xs font-semibold"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 rounded-xl bg-accent text-accent-fg text-xs font-semibold"
                 >
                   <Play className="w-3.5 h-3.5 fill-current" /> Play
                 </motion.button>
@@ -331,6 +320,7 @@ export const StartScreen: React.FC<Props> = ({
                     </div>
                   </div>
 
+                  {createError && <p role="alert" className="text-xs text-fg">{createError}</p>}
                   <div className="flex items-center justify-end gap-2 pt-2">
                     <button
                       type="button"
@@ -341,7 +331,7 @@ export const StartScreen: React.FC<Props> = ({
                     </button>
                     <button
                       type="button"
-                      disabled={!canCreate}
+                      disabled={!canCreate || submitting}
                       onClick={() => void submitNewProfile()}
                       className="px-4 py-2 rounded-xl text-xs font-semibold bg-fg text-bg disabled:opacity-45"
                     >

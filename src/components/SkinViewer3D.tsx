@@ -1,7 +1,9 @@
-import React, { useEffect, useRef } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import { useReducedMotion } from "framer-motion";
 import { IdleAnimation, SkinViewer } from "skinview3d";
 import { getDefaultSteveSkinDataUrl } from "../lib/defaultSteve";
 import type { SkinVariant } from "../types/launcher";
+import { SkinHead } from "./SkinHead";
 
 interface Props {
   skinUrl: string | null;
@@ -24,6 +26,8 @@ export const SkinViewer3D: React.FC<Props> = ({
   variant,
   onDecodeError,
 }) => {
+  const [unavailable, setUnavailable] = useState(false);
+  const reducedMotion = useReducedMotion();
   const containerRef = useRef<HTMLDivElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const viewerRef = useRef<SkinViewer | null>(null);
@@ -41,19 +45,19 @@ export const SkinViewer3D: React.FC<Props> = ({
     const canvas = canvasRef.current;
     if (!container || !canvas) return;
 
-    mountedRef.current = true;
     const initW = Math.max(240, container.clientWidth || 420);
     const initH = Math.max(300, container.clientHeight || 520);
 
-    const viewer = new SkinViewer({
-      canvas,
-      width: initW,
-      height: initH,
-    });
-
+    let viewer: SkinViewer;
+    try {
+      viewer = new SkinViewer({ canvas, width: initW, height: initH });
+    } catch {
+      setUnavailable(true);
+      return;
+    }
+    mountedRef.current = true;
     viewer.fov = 50;
     viewer.zoom = 0.86;
-    viewer.animation = new IdleAnimation();
     viewer.controls.enableRotate = true;
     viewer.controls.enableZoom = true;
     viewer.controls.enablePan = false;
@@ -81,6 +85,13 @@ export const SkinViewer3D: React.FC<Props> = ({
   }, []);
 
   useEffect(() => {
+    if (viewerRef.current) {
+      viewerRef.current.animation = reducedMotion ? null : new IdleAnimation();
+    }
+  }, [reducedMotion]);
+
+  useEffect(() => {
+    if (!viewerRef.current) return;
     const gen = ++skinGenRef.current;
     const fallbackSteve = getDefaultSteveSkinDataUrl();
     const resolvedSkin = skinUrl || fallbackSteve;
@@ -97,7 +108,7 @@ export const SkinViewer3D: React.FC<Props> = ({
         if (!mountedRef.current || skinGenRef.current !== gen || !viewerRef.current) {
           return;
         }
-        void viewerRef.current.loadSkin(fallbackSteve, { model: "default" });
+        void viewerRef.current.loadSkin(fallbackSteve, { model: resolvedModel });
         if (skinUrl) {
           onDecodeErrorRef.current?.("Invalid skin PNG; reverted preview to Steve");
         }
@@ -127,6 +138,15 @@ export const SkinViewer3D: React.FC<Props> = ({
         }
       });
   }, [capeUrl]);
+
+  if (unavailable) {
+    return (
+      <div className="grid h-full place-content-center justify-items-center gap-2 text-xs text-muted">
+        <SkinHead skinUrl={skinUrl ?? getDefaultSteveSkinDataUrl()} />
+        <span>3D preview unavailable</span>
+      </div>
+    );
+  }
 
   return (
     <div
