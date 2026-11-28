@@ -230,8 +230,16 @@ pub fn read_profile_text_file(
         meta.len() <= 4 * 1024 * 1024,
         "File is larger than 4 MB viewer limit"
     );
-    let raw = std::fs::read(target)?;
-    Ok(String::from_utf8_lossy(&raw).into_owned())
+    let is_log = target
+        .extension()
+        .map(|e| e.eq_ignore_ascii_case("log"))
+        .unwrap_or(false);
+    if is_log {
+        let raw = std::fs::read(target)?;
+        Ok(String::from_utf8_lossy(&raw).into_owned())
+    } else {
+        Ok(std::fs::read_to_string(target)?)
+    }
 }
 
 pub fn write_profile_text_file(

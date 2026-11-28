@@ -32,19 +32,18 @@ async function normalizeSkinHeadTexture(src: string): Promise<string> {
   ctx.clearRect(0, 0, canvas.width, canvas.height);
   ctx.drawImage(img, 0, 0);
 
-  const hatX = 32 * scale;
-  const hatW = 32 * scale;
-  const hatH = 16 * scale;
-  const hatPixels = ctx.getImageData(hatX, 0, hatW, hatH).data;
+  const srcW = Math.max(1, Math.min(canvas.width, img.naturalWidth));
+  const srcH = Math.max(1, Math.min(canvas.height, img.naturalHeight));
+  const skinPixels = ctx.getImageData(0, 0, srcW, srcH).data;
   let hasTransparency = false;
-  for (let i = 3; i < hatPixels.length; i += 4) {
-    if (hatPixels[i] < 255) {
+  for (let i = 3; i < skinPixels.length; i += 4) {
+    if (skinPixels[i] < 255) {
       hasTransparency = true;
       break;
     }
   }
   if (!hasTransparency) {
-    ctx.clearRect(hatX, 0, hatW, hatH);
+    ctx.clearRect(32 * scale, 0, 32 * scale, 16 * scale);
   }
 
   const normalized = canvas.toDataURL("image/png");

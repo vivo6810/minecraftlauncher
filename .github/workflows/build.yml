@@ -151,12 +151,13 @@ jobs:
           sha256sum -- "${files[@]}" > SHA256SUMS.txt
 
           if gh release view "${TAG}" >/dev/null 2>&1; then
-            gh release upload "${TAG}" -- "${files[@]}" SHA256SUMS.txt --clobber
+            gh release upload "${TAG}" --clobber -- "${files[@]}" SHA256SUMS.txt
             gh release edit "${TAG}" --title "TwilightLauncher ${TAG}" --draft=false --latest
           else
-            gh release create "${TAG}" -- "${files[@]}" SHA256SUMS.txt \
+            gh release create "${TAG}" \
               --target "${GITHUB_SHA}" \
               --title "TwilightLauncher ${TAG}" \
               --generate-notes \
-              --latest
+              --latest \
+              -- "${files[@]}" SHA256SUMS.txt
           fi

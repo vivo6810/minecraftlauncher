@@ -303,6 +303,17 @@ where
     exit_out
 }
 
+fn trailing_incomplete_utf8_len(buf: &[u8]) -> usize {
+    let mut check = &buf[buf.len().saturating_sub(4)..];
+    while let Err(err) = std::str::from_utf8(check) {
+        match err.error_len() {
+            None => return check.len() - err.valid_up_to(),
+            Some(bad_len) => check = &check[err.valid_up_to() + bad_len..],
+        }
+    }
+    0
+}
+
 async fn stream_game_output(
     stream: Option<impl tokio::io::AsyncRead + Unpin>,
     on_line: &impl Fn(String),
@@ -361,9 +372,16 @@ async fn stream_game_output(
             if bytes.last() == Some(&b'\r') {
                 bytes.pop();
                 skip_leading_lf = true;
+                on_line(String::from_utf8_lossy(&bytes).into_owned());
+                bytes.clear();
+            } else {
+                let keep = trailing_incomplete_utf8_len(&bytes);
+                let emit_len = bytes.len().saturating_sub(keep);
+                if emit_len > 0 {
+                    on_line(String::from_utf8_lossy(&bytes[..emit_len]).into_owned());
+                    bytes.drain(..emit_len);
+                }
             }
-            on_line(String::from_utf8_lossy(&bytes).into_owned());
-            bytes.clear();
         } else {
             bytes.extend_from_slice(slice);
             let consumed = start + slice.len();
@@ -416,6 +434,25 @@ mod tests {
         assert_eq!(lines[0].len(), MAX_LOG_LINE_BYTES);
         assert_eq!(lines[1].len(), MAX_LOG_LINE_BYTES);
         assert_eq!(lines[2].len(), 137);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn preserves_multibyte_utf8_split_across_chunk_boundary() -> Result<()> {
+        let (stdout, mut out) = tokio::io::duplex(256);
+        let lines = Mutex::new(Vec::new());
+        let collect = |line| lines.lock().unwrap().push(line);
+        let mut payload = vec![b'a'; MAX_LOG_LINE_BYTES - 1];
+        payload.extend_from_slice("é!\n".as_bytes());
+        let ((), written) = tokio::join!(
+            stream_game_output(Some(stdout), &collect),
+            async move { out.write_all(&payload).await },
+        );
+        written?;
+        let lines = lines.into_inner().unwrap();
+        assert_eq!(lines.len(), 2);
+        assert_eq!(lines[0].len(), MAX_LOG_LINE_BYTES - 1);
+        assert_eq!(lines[1], "é!");
         Ok(())
     }
 

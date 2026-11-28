@@ -260,5 +260,8 @@ mod tests {
         let read_log = files::read_profile_text_file(&paths, "prof-logs", "logs/latest.log").unwrap();
         assert!(read_log.contains("[main/INFO]: Ready"));
         assert!(files::write_profile_text_file(&paths, "prof-logs", "logs/latest.log", "overwrite").is_err());
+
+        std::fs::write(prof_dir.join("corrupt.cfg"), b"x=\xe9\n").unwrap();
+        assert!(files::read_profile_text_file(&paths, "prof-logs", "corrupt.cfg").is_err());
     }
 }
